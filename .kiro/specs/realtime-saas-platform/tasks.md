@@ -73,13 +73,22 @@ This implementation plan converts the Realtime SaaS Platform design into actiona
 
 
 
-- [ ] 3.2 Write property test for permission-based rejection
+- [x] 3.2 Write property test for permission-based rejection
+
+
+
+
   - **Property 4: Permission-based rejection**
 
 
   - **Validates: Requirements 1.4**
 
-- [ ] 3.3 Write property test for rate limiting
+- [x] 3.3 Write property test for rate limiting
+
+
+
+
+
   - **Property 5: Rate limiting enforcement**
   - **Validates: Requirements 1.5**
 
