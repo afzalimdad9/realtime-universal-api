@@ -34,6 +34,8 @@ thiserror = { workspace = true }
 # Authentication and security
 jsonwebtoken = { workspace = true }
 bcrypt = { workspace = true }
+rand = { workspace = true }
+sha2 = { workspace = true }
 
 # HTTP client for external APIs
 reqwest = { workspace = true }
