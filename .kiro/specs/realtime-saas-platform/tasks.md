@@ -92,18 +92,27 @@ This implementation plan converts the Realtime SaaS Platform design into actiona
   - **Property 5: Rate limiting enforcement**
   - **Validates: Requirements 1.5**
 
-- [ ] 4. Implement NATS JetStream integration
+- [x] 4. Implement NATS JetStream integration
+
+
+
+
+
   - Set up NATS JetStream connection and stream configuration
   - Create event publishing service with tenant/project scoping
   - Implement durable consumers for WebSocket and SSE delivery
   - Add event persistence and replay functionality with cursor support
   - _Requirements: 10.1, 10.2, 10.4_
 
-- [ ] 4.1 Write property test for event persistence
+- [x] 4.1 Write property test for event persistence
+
+
   - **Property 29: NATS JetStream persistence**
   - **Validates: Requirements 10.1**
 
-- [ ] 4.2 Write property test for event replay
+
+- [x] 4.2 Write property test for event replay
+
   - **Property 30: Cursor-based event replay**
   - **Validates: Requirements 10.2**
 

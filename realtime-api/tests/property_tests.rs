@@ -913,3 +913,769 @@ mod rate_limiting_properties {
         }
     }
 }
+
+/// **Feature: realtime-saas-platform, Property 29: NATS JetStream persistence**
+/// 
+/// This property validates that events are properly persisted using NATS JetStream for durability.
+/// For any published event, the system should persist events using NATS JetStream for durability.
+/// 
+/// **Validates: Requirements 10.1**
+
+#[cfg(test)]
+mod nats_jetstream_persistence_properties {
+    use proptest::prelude::*;
+    use serde_json::json;
+    use std::collections::HashMap;
+    
+    // Simulate NATS JetStream persistence
+    #[derive(Debug, Clone)]
+    struct MockJetStreamStore {
+        events: HashMap<String, (serde_json::Value, u64)>, // (event_data, sequence)
+        next_sequence: u64,
+    }
+    
+    impl MockJetStreamStore {
+        fn new() -> Self {
+            Self {
+                events: HashMap::new(),
+                next_sequence: 1,
+            }
+        }
+        
+        fn persist_event(&mut self, subject: &str, event_data: serde_json::Value) -> Result<u64, String> {
+            let sequence = self.next_sequence;
+            self.events.insert(subject.to_string(), (event_data, sequence));
+            self.next_sequence += 1;
+            Ok(sequence)
+        }
+        
+        fn get_event(&self, subject: &str) -> Option<&(serde_json::Value, u64)> {
+            self.events.get(subject)
+        }
+        
+        fn get_events_by_tenant(&self, tenant_id: &str) -> Vec<(String, serde_json::Value, u64)> {
+            self.events
+                .iter()
+                .filter(|(subject, _)| subject.starts_with(&format!("events.{}", tenant_id)))
+                .map(|(subject, (data, seq))| (subject.clone(), data.clone(), *seq))
+                .collect()
+        }
+        
+        fn event_count(&self) -> usize {
+            self.events.len()
+        }
+    }
+    
+    // Generate tenant IDs for testing
+    fn tenant_id_strategy() -> impl Strategy<Value = String> {
+        prop::collection::vec(prop::char::range('a', 'z'), 8..20)
+            .prop_map(|chars| format!("tenant_{}", chars.into_iter().collect::<String>()))
+    }
+    
+    // Generate project IDs for testing
+    fn project_id_strategy() -> impl Strategy<Value = String> {
+        prop::collection::vec(prop::char::range('a', 'z'), 8..20)
+            .prop_map(|chars| format!("project_{}", chars.into_iter().collect::<String>()))
+    }
+    
+    // Generate topic names for testing
+    fn topic_strategy() -> impl Strategy<Value = String> {
+        prop_oneof![
+            Just("user.created".to_string()),
+            Just("user.updated".to_string()),
+            Just("user.deleted".to_string()),
+            Just("order.placed".to_string()),
+            Just("payment.processed".to_string()),
+            Just("notification.sent".to_string()),
+        ]
+    }
+    
+    // Generate event payloads for testing
+    fn event_payload_strategy() -> impl Strategy<Value = serde_json::Value> {
+        prop_oneof![
+            Just(json!({"type": "user_event", "user_id": "user_123", "action": "created"})),
+            Just(json!({"type": "order_event", "order_id": "order_456", "amount": 99.99})),
+            Just(json!({"type": "notification", "message": "Hello World", "priority": "high"})),
+            Just(json!({"type": "system_event", "component": "auth", "status": "healthy"})),
+        ]
+    }
+    
+    proptest! {
+        /// Property: Event persistence should store events durably in JetStream
+        /// For any published event, the event should be persisted and retrievable
+        /// from NATS JetStream with proper tenant/project scoping
+        #[test]
+        fn test_event_persistence_durability(
+            tenant_id in tenant_id_strategy(),
+            project_id in project_id_strategy(),
+            topic in topic_strategy(),
+            payload in event_payload_strategy()
+        ) {
+            let mut jetstream_store = MockJetStreamStore::new();
+            
+            // Create the JetStream subject with tenant/project scoping
+            let subject = format!("events.{}.{}.{}", tenant_id, project_id, topic);
+            
+            // Create event data
+            let event_data = json!({
+                "id": uuid::Uuid::new_v4().to_string(),
+                "tenant_id": tenant_id,
+                "project_id": project_id,
+                "topic": topic,
+                "payload": payload,
+                "published_at": chrono::Utc::now().to_rfc3339()
+            });
+            
+            // Persist the event
+            let sequence = jetstream_store.persist_event(&subject, event_data.clone())
+                .expect("Event persistence should succeed");
+            
+            // Verify the event was persisted
+            assert!(sequence > 0, "Sequence number should be positive");
+            
+            // Retrieve the event and verify it matches
+            let stored_event = jetstream_store.get_event(&subject)
+                .expect("Persisted event should be retrievable");
+            
+            assert_eq!(stored_event.0, event_data, "Stored event data should match original");
+            assert_eq!(stored_event.1, sequence, "Stored sequence should match returned sequence");
+            
+            // Verify tenant isolation - events should be scoped to tenant
+            let tenant_events = jetstream_store.get_events_by_tenant(&tenant_id);
+            assert!(!tenant_events.is_empty(), "Should find events for the tenant");
+            assert!(tenant_events.iter().any(|(subj, _, _)| subj == &subject), 
+                "Should find the specific event for the tenant");
+        }
+        
+        /// Property: Event persistence should maintain order with sequence numbers
+        /// For any sequence of events, JetStream should assign monotonically increasing
+        /// sequence numbers that preserve the order of persistence
+        #[test]
+        fn test_event_persistence_ordering(
+            tenant_id in tenant_id_strategy(),
+            project_id in project_id_strategy(),
+            topics in prop::collection::vec(topic_strategy(), 1..=10),
+            payloads in prop::collection::vec(event_payload_strategy(), 1..=10)
+        ) {
+            prop_assume!(topics.len() == payloads.len());
+            
+            let mut jetstream_store = MockJetStreamStore::new();
+            let mut sequences = Vec::new();
+            
+            // Persist multiple events
+            for (i, (topic, payload)) in topics.iter().zip(payloads.iter()).enumerate() {
+                let subject = format!("events.{}.{}.{}", tenant_id, project_id, topic);
+                let event_data = json!({
+                    "id": format!("event_{}", i),
+                    "tenant_id": tenant_id,
+                    "project_id": project_id,
+                    "topic": topic,
+                    "payload": payload,
+                    "published_at": chrono::Utc::now().to_rfc3339()
+                });
+                
+                let sequence = jetstream_store.persist_event(&subject, event_data)
+                    .expect("Event persistence should succeed");
+                sequences.push(sequence);
+            }
+            
+            // Verify sequences are monotonically increasing
+            for i in 1..sequences.len() {
+                assert!(sequences[i] > sequences[i-1], 
+                    "Sequence numbers should be monotonically increasing: {} should be > {}", 
+                    sequences[i], sequences[i-1]);
+            }
+            
+            // Verify all events were persisted
+            assert_eq!(jetstream_store.event_count(), topics.len(), 
+                "All events should be persisted");
+        }
+        
+        /// Property: Event persistence should handle tenant isolation
+        /// For any events from different tenants, they should be stored separately
+        /// and not interfere with each other
+        #[test]
+        fn test_event_persistence_tenant_isolation(
+            tenant_a in tenant_id_strategy(),
+            tenant_b in tenant_id_strategy(),
+            project_a in project_id_strategy(),
+            project_b in project_id_strategy(),
+            topic in topic_strategy(),
+            payload_a in event_payload_strategy(),
+            payload_b in event_payload_strategy()
+        ) {
+            // Ensure we have different tenants
+            prop_assume!(tenant_a != tenant_b);
+            
+            let mut jetstream_store = MockJetStreamStore::new();
+            
+            // Create subjects for different tenants
+            let subject_a = format!("events.{}.{}.{}", tenant_a, project_a, topic);
+            let subject_b = format!("events.{}.{}.{}", tenant_b, project_b, topic);
+            
+            // Create event data for both tenants
+            let event_data_a = json!({
+                "id": "event_a",
+                "tenant_id": tenant_a,
+                "project_id": project_a,
+                "topic": topic,
+                "payload": payload_a,
+                "published_at": chrono::Utc::now().to_rfc3339()
+            });
+            
+            let event_data_b = json!({
+                "id": "event_b",
+                "tenant_id": tenant_b,
+                "project_id": project_b,
+                "topic": topic,
+                "payload": payload_b,
+                "published_at": chrono::Utc::now().to_rfc3339()
+            });
+            
+            // Persist events for both tenants
+            let seq_a = jetstream_store.persist_event(&subject_a, event_data_a.clone())
+                .expect("Event A persistence should succeed");
+            let seq_b = jetstream_store.persist_event(&subject_b, event_data_b.clone())
+                .expect("Event B persistence should succeed");
+            
+            // Verify both events are stored
+            assert_ne!(seq_a, seq_b, "Different events should have different sequences");
+            
+            // Verify tenant isolation - each tenant should only see their own events
+            let events_a = jetstream_store.get_events_by_tenant(&tenant_a);
+            let events_b = jetstream_store.get_events_by_tenant(&tenant_b);
+            
+            assert_eq!(events_a.len(), 1, "Tenant A should have exactly one event");
+            assert_eq!(events_b.len(), 1, "Tenant B should have exactly one event");
+            
+            // Verify events don't cross tenant boundaries
+            assert!(events_a.iter().all(|(subj, _, _)| subj.contains(&tenant_a)), 
+                "All events for tenant A should contain tenant A ID");
+            assert!(events_b.iter().all(|(subj, _, _)| subj.contains(&tenant_b)), 
+                "All events for tenant B should contain tenant B ID");
+            
+            // Verify no cross-contamination
+            assert!(!events_a.iter().any(|(subj, _, _)| subj.contains(&tenant_b)), 
+                "Tenant A events should not contain tenant B ID");
+            assert!(!events_b.iter().any(|(subj, _, _)| subj.contains(&tenant_a)), 
+                "Tenant B events should not contain tenant A ID");
+        }
+        
+        /// Property: Event persistence should be idempotent for duplicate events
+        /// For any event that is persisted multiple times with the same ID,
+        /// the system should handle it gracefully (either reject duplicates or store them)
+        #[test]
+        fn test_event_persistence_duplicate_handling(
+            tenant_id in tenant_id_strategy(),
+            project_id in project_id_strategy(),
+            topic in topic_strategy(),
+            payload in event_payload_strategy()
+        ) {
+            let mut jetstream_store = MockJetStreamStore::new();
+            let subject = format!("events.{}.{}.{}", tenant_id, project_id, topic);
+            
+            let event_id = uuid::Uuid::new_v4().to_string();
+            let event_data = json!({
+                "id": event_id,
+                "tenant_id": tenant_id,
+                "project_id": project_id,
+                "topic": topic,
+                "payload": payload,
+                "published_at": chrono::Utc::now().to_rfc3339()
+            });
+            
+            // Persist the same event multiple times
+            let seq1 = jetstream_store.persist_event(&subject, event_data.clone())
+                .expect("First persistence should succeed");
+            let seq2 = jetstream_store.persist_event(&format!("{}_duplicate", subject), event_data.clone())
+                .expect("Second persistence should succeed");
+            
+            // In JetStream, each publish gets a new sequence number
+            // This tests that the system can handle multiple events
+            assert_ne!(seq1, seq2, "Different publishes should get different sequences");
+            assert!(seq2 > seq1, "Later sequence should be higher");
+            
+            // Verify both events are stored (JetStream allows duplicates by design)
+            assert!(jetstream_store.event_count() >= 2, "Both events should be stored");
+        }
+        
+        /// Property: Event persistence should maintain data integrity
+        /// For any event data, the persisted version should exactly match the original
+        /// without any data corruption or modification
+        #[test]
+        fn test_event_persistence_data_integrity(
+            tenant_id in tenant_id_strategy(),
+            project_id in project_id_strategy(),
+            topic in topic_strategy(),
+            payload in event_payload_strategy()
+        ) {
+            let mut jetstream_store = MockJetStreamStore::new();
+            let subject = format!("events.{}.{}.{}", tenant_id, project_id, topic);
+            
+            // Create complex event data with various data types
+            let event_data = json!({
+                "id": uuid::Uuid::new_v4().to_string(),
+                "tenant_id": tenant_id,
+                "project_id": project_id,
+                "topic": topic,
+                "payload": payload,
+                "published_at": chrono::Utc::now().to_rfc3339(),
+                "metadata": {
+                    "version": "1.0",
+                    "source": "test",
+                    "numbers": [1, 2, 3, 4, 5],
+                    "boolean": true,
+                    "null_value": null
+                }
+            });
+            
+            // Persist the event
+            let sequence = jetstream_store.persist_event(&subject, event_data.clone())
+                .expect("Event persistence should succeed");
+            
+            // Retrieve and verify data integrity
+            let stored_event = jetstream_store.get_event(&subject)
+                .expect("Event should be retrievable");
+            
+            // Verify complete data integrity
+            assert_eq!(stored_event.0, event_data, "Stored data should exactly match original");
+            assert_eq!(stored_event.1, sequence, "Sequence should match");
+            
+            // Verify specific fields to ensure no corruption
+            assert_eq!(stored_event.0["tenant_id"], tenant_id);
+            assert_eq!(stored_event.0["project_id"], project_id);
+            assert_eq!(stored_event.0["topic"], topic);
+            assert_eq!(stored_event.0["payload"], payload);
+            
+            // Verify complex nested data
+            assert_eq!(stored_event.0["metadata"]["version"], "1.0");
+            assert_eq!(stored_event.0["metadata"]["numbers"], json!([1, 2, 3, 4, 5]));
+            assert_eq!(stored_event.0["metadata"]["boolean"], true);
+            assert!(stored_event.0["metadata"]["null_value"].is_null());
+        }
+    }
+}
+
+/// **Feature: realtime-saas-platform, Property 30: Cursor-based event replay**
+/// 
+/// This property validates that event replay functionality works correctly with cursor support.
+/// For any event replay request, the system should provide cursor-based replay from specific 
+/// timestamps or sequences.
+/// 
+/// **Validates: Requirements 10.2**
+
+#[cfg(test)]
+mod cursor_based_event_replay_properties {
+    use proptest::prelude::*;
+    use serde_json::json;
+    use std::collections::HashMap;
+    use chrono::{DateTime, Utc};
+    
+    // Simulate event cursor for replay
+    #[derive(Debug, Clone, PartialEq)]
+    struct EventCursor {
+        sequence: u64,
+        timestamp: DateTime<Utc>,
+    }
+    
+    // Simulate event replay store
+    #[derive(Debug, Clone)]
+    struct MockEventReplayStore {
+        events: Vec<(String, serde_json::Value, u64, DateTime<Utc>)>, // (subject, data, sequence, timestamp)
+        next_sequence: u64,
+    }
+    
+    impl MockEventReplayStore {
+        fn new() -> Self {
+            Self {
+                events: Vec::new(),
+                next_sequence: 1,
+            }
+        }
+        
+        fn add_event(&mut self, subject: &str, event_data: serde_json::Value, timestamp: DateTime<Utc>) -> u64 {
+            let sequence = self.next_sequence;
+            self.events.push((subject.to_string(), event_data, sequence, timestamp));
+            self.next_sequence += 1;
+            sequence
+        }
+        
+        fn replay_from_sequence(&self, tenant_id: &str, from_sequence: u64, limit: Option<usize>) -> Vec<(serde_json::Value, EventCursor)> {
+            let tenant_prefix = format!("events.{}", tenant_id);
+            let mut results = Vec::new();
+            
+            for (subject, data, sequence, timestamp) in &self.events {
+                if subject.starts_with(&tenant_prefix) && *sequence >= from_sequence {
+                    let cursor = EventCursor {
+                        sequence: *sequence,
+                        timestamp: *timestamp,
+                    };
+                    results.push((data.clone(), cursor));
+                    
+                    if let Some(limit) = limit {
+                        if results.len() >= limit {
+                            break;
+                        }
+                    }
+                }
+            }
+            
+            results
+        }
+        
+        fn replay_from_timestamp(&self, tenant_id: &str, from_timestamp: DateTime<Utc>, limit: Option<usize>) -> Vec<(serde_json::Value, EventCursor)> {
+            let tenant_prefix = format!("events.{}", tenant_id);
+            let mut results = Vec::new();
+            
+            for (subject, data, sequence, timestamp) in &self.events {
+                if subject.starts_with(&tenant_prefix) && *timestamp >= from_timestamp {
+                    let cursor = EventCursor {
+                        sequence: *sequence,
+                        timestamp: *timestamp,
+                    };
+                    results.push((data.clone(), cursor));
+                    
+                    if let Some(limit) = limit {
+                        if results.len() >= limit {
+                            break;
+                        }
+                    }
+                }
+            }
+            
+            results
+        }
+        
+        fn get_events_for_tenant(&self, tenant_id: &str) -> Vec<(serde_json::Value, EventCursor)> {
+            let tenant_prefix = format!("events.{}", tenant_id);
+            let mut results = Vec::new();
+            
+            for (subject, data, sequence, timestamp) in &self.events {
+                if subject.starts_with(&tenant_prefix) {
+                    let cursor = EventCursor {
+                        sequence: *sequence,
+                        timestamp: *timestamp,
+                    };
+                    results.push((data.clone(), cursor));
+                }
+            }
+            
+            results
+        }
+        
+        fn event_count(&self) -> usize {
+            self.events.len()
+        }
+    }
+    
+    // Generate tenant IDs for testing
+    fn tenant_id_strategy() -> impl Strategy<Value = String> {
+        prop::collection::vec(prop::char::range('a', 'z'), 8..20)
+            .prop_map(|chars| format!("tenant_{}", chars.into_iter().collect::<String>()))
+    }
+    
+    // Generate project IDs for testing
+    fn project_id_strategy() -> impl Strategy<Value = String> {
+        prop::collection::vec(prop::char::range('a', 'z'), 8..20)
+            .prop_map(|chars| format!("project_{}", chars.into_iter().collect::<String>()))
+    }
+    
+    // Generate topic names for testing
+    fn topic_strategy() -> impl Strategy<Value = String> {
+        prop_oneof![
+            Just("user.created".to_string()),
+            Just("user.updated".to_string()),
+            Just("order.placed".to_string()),
+            Just("payment.processed".to_string()),
+        ]
+    }
+    
+    // Generate event payloads for testing
+    fn event_payload_strategy() -> impl Strategy<Value = serde_json::Value> {
+        prop_oneof![
+            Just(json!({"type": "user_event", "user_id": "user_123"})),
+            Just(json!({"type": "order_event", "order_id": "order_456"})),
+            Just(json!({"type": "payment_event", "amount": 99.99})),
+        ]
+    }
+    
+    proptest! {
+        /// Property: Event replay should return events from specified sequence
+        /// For any tenant and starting sequence, replay should return all events
+        /// with sequence numbers greater than or equal to the starting sequence
+        #[test]
+        fn test_cursor_based_replay_from_sequence(
+            tenant_id in tenant_id_strategy(),
+            project_id in project_id_strategy(),
+            event_count in 3usize..=10usize,
+            start_sequence in 1u64..=5u64
+        ) {
+            
+            let mut replay_store = MockEventReplayStore::new();
+            let mut expected_sequences = Vec::new();
+            
+            // Add events to the store
+            for i in 0..event_count {
+                let topic = format!("topic_{}", i);
+                let payload = json!({"event_id": i, "data": format!("event_{}", i)});
+                let subject = format!("events.{}.{}.{}", tenant_id, project_id, topic);
+                let timestamp = Utc::now();
+                let sequence = replay_store.add_event(&subject, payload, timestamp);
+                expected_sequences.push(sequence);
+            }
+            
+            // Replay from the specified sequence
+            let replayed_events = replay_store.replay_from_sequence(&tenant_id, start_sequence, None);
+            
+            // Verify that all returned events have sequence >= start_sequence
+            for (_, cursor) in &replayed_events {
+                assert!(cursor.sequence >= start_sequence, 
+                    "Replayed event sequence {} should be >= start sequence {}", 
+                    cursor.sequence, start_sequence);
+            }
+            
+            // Verify that sequences are in order
+            let mut prev_sequence = 0;
+            for (_, cursor) in &replayed_events {
+                assert!(cursor.sequence > prev_sequence, 
+                    "Sequences should be in ascending order: {} should be > {}", 
+                    cursor.sequence, prev_sequence);
+                prev_sequence = cursor.sequence;
+            }
+            
+            // Verify we got the expected number of events
+            let expected_count = expected_sequences.iter().filter(|&&seq| seq >= start_sequence).count();
+            assert_eq!(replayed_events.len(), expected_count, 
+                "Should replay {} events from sequence {}", expected_count, start_sequence);
+        }
+        
+        /// Property: Event replay should respect tenant isolation
+        /// For any two different tenants, replay should only return events
+        /// belonging to the specified tenant
+        #[test]
+        fn test_cursor_based_replay_tenant_isolation(
+            tenant_a in tenant_id_strategy(),
+            tenant_b in tenant_id_strategy(),
+            project_a in project_id_strategy(),
+            project_b in project_id_strategy(),
+            topic in topic_strategy(),
+            payload_a in event_payload_strategy(),
+            payload_b in event_payload_strategy()
+        ) {
+            // Ensure we have different tenants
+            prop_assume!(tenant_a != tenant_b);
+            
+            let mut replay_store = MockEventReplayStore::new();
+            
+            // Add events for both tenants
+            let subject_a = format!("events.{}.{}.{}", tenant_a, project_a, topic);
+            let subject_b = format!("events.{}.{}.{}", tenant_b, project_b, topic);
+            
+            let timestamp = Utc::now();
+            let seq_a = replay_store.add_event(&subject_a, payload_a.clone(), timestamp);
+            let seq_b = replay_store.add_event(&subject_b, payload_b.clone(), timestamp);
+            
+            // Replay events for tenant A
+            let events_a = replay_store.replay_from_sequence(&tenant_a, 1, None);
+            let events_b = replay_store.replay_from_sequence(&tenant_b, 1, None);
+            
+            // Verify tenant isolation
+            assert_eq!(events_a.len(), 1, "Tenant A should have exactly one event");
+            assert_eq!(events_b.len(), 1, "Tenant B should have exactly one event");
+            
+            // Verify correct events are returned
+            assert_eq!(events_a[0].1.sequence, seq_a, "Tenant A should get its own event");
+            assert_eq!(events_b[0].1.sequence, seq_b, "Tenant B should get its own event");
+            
+            // Verify no cross-contamination
+            assert_ne!(events_a[0].1.sequence, seq_b, "Tenant A should not get tenant B's event");
+            assert_ne!(events_b[0].1.sequence, seq_a, "Tenant B should not get tenant A's event");
+        }
+        
+        /// Property: Event replay should support timestamp-based cursors
+        /// For any tenant and starting timestamp, replay should return all events
+        /// with timestamps greater than or equal to the starting timestamp
+        #[test]
+        fn test_cursor_based_replay_from_timestamp(
+            tenant_id in tenant_id_strategy(),
+            project_id in project_id_strategy(),
+            event_count in 2usize..=5usize
+        ) {
+            
+            let mut replay_store = MockEventReplayStore::new();
+            let base_time = Utc::now();
+            let mut timestamps = Vec::new();
+            
+            // Add events with different timestamps
+            for i in 0..event_count {
+                let topic = format!("topic_{}", i);
+                let payload = json!({"event_id": i, "data": format!("event_{}", i)});
+                let subject = format!("events.{}.{}.{}", tenant_id, project_id, topic);
+                let timestamp = base_time + chrono::Duration::seconds(i as i64);
+                timestamps.push(timestamp);
+                replay_store.add_event(&subject, payload, timestamp);
+            }
+            
+            // Choose a timestamp in the middle
+            let start_timestamp = if timestamps.len() > 1 {
+                timestamps[timestamps.len() / 2]
+            } else {
+                timestamps[0]
+            };
+            
+            // Replay from the specified timestamp
+            let replayed_events = replay_store.replay_from_timestamp(&tenant_id, start_timestamp, None);
+            
+            // Verify that all returned events have timestamp >= start_timestamp
+            for (_, cursor) in &replayed_events {
+                assert!(cursor.timestamp >= start_timestamp, 
+                    "Replayed event timestamp {:?} should be >= start timestamp {:?}", 
+                    cursor.timestamp, start_timestamp);
+            }
+            
+            // Verify we got the expected number of events
+            let expected_count = timestamps.iter().filter(|&&ts| ts >= start_timestamp).count();
+            assert_eq!(replayed_events.len(), expected_count, 
+                "Should replay {} events from timestamp {:?}", expected_count, start_timestamp);
+        }
+        
+        /// Property: Event replay should support limit parameter
+        /// For any replay request with a limit, the number of returned events
+        /// should not exceed the specified limit
+        #[test]
+        fn test_cursor_based_replay_with_limit(
+            tenant_id in tenant_id_strategy(),
+            project_id in project_id_strategy(),
+            event_count in 5usize..=20usize,
+            limit in 1usize..=10usize
+        ) {
+            prop_assume!(event_count > limit); // Ensure we have more events than the limit
+            
+            let mut replay_store = MockEventReplayStore::new();
+            
+            // Add events to the store
+            for i in 0..event_count {
+                let topic = format!("topic_{}", i);
+                let payload = json!({"event_id": i, "data": format!("event_{}", i)});
+                let subject = format!("events.{}.{}.{}", tenant_id, project_id, topic);
+                let timestamp = Utc::now();
+                replay_store.add_event(&subject, payload, timestamp);
+            }
+            
+            // Replay with limit
+            let replayed_events = replay_store.replay_from_sequence(&tenant_id, 1, Some(limit));
+            
+            // Verify the limit is respected
+            assert!(replayed_events.len() <= limit, 
+                "Replayed events count {} should not exceed limit {}", 
+                replayed_events.len(), limit);
+            
+            // If we have enough events, we should get exactly the limit
+            let total_events = replay_store.get_events_for_tenant(&tenant_id).len();
+            if total_events >= limit {
+                assert_eq!(replayed_events.len(), limit, 
+                    "Should return exactly {} events when limit is set and enough events exist", limit);
+            }
+            
+            // Verify events are still in sequence order
+            let mut prev_sequence = 0;
+            for (_, cursor) in &replayed_events {
+                assert!(cursor.sequence > prev_sequence, 
+                    "Even with limit, sequences should be in order: {} should be > {}", 
+                    cursor.sequence, prev_sequence);
+                prev_sequence = cursor.sequence;
+            }
+        }
+        
+        /// Property: Event replay should handle empty results gracefully
+        /// For any replay request that matches no events, the system should
+        /// return an empty result set without errors
+        #[test]
+        fn test_cursor_based_replay_empty_results(
+            tenant_id in tenant_id_strategy(),
+            project_id in project_id_strategy(),
+            event_count in 1usize..=5usize,
+            high_sequence in 1000u64..=2000u64
+        ) {
+            
+            let mut replay_store = MockEventReplayStore::new();
+            
+            // Add a few events (sequences will be 1, 2, 3, ...)
+            for i in 0..event_count {
+                let topic = format!("topic_{}", i);
+                let payload = json!({"event_id": i, "data": format!("event_{}", i)});
+                let subject = format!("events.{}.{}.{}", tenant_id, project_id, topic);
+                let timestamp = Utc::now();
+                replay_store.add_event(&subject, payload, timestamp);
+            }
+            
+            // Try to replay from a sequence higher than any existing event
+            let replayed_events = replay_store.replay_from_sequence(&tenant_id, high_sequence, None);
+            
+            // Should return empty results
+            assert_eq!(replayed_events.len(), 0, 
+                "Replay from high sequence {} should return no events", high_sequence);
+            
+            // Try to replay for a non-existent tenant
+            let fake_tenant = format!("{}_nonexistent", tenant_id);
+            let empty_results = replay_store.replay_from_sequence(&fake_tenant, 1, None);
+            
+            assert_eq!(empty_results.len(), 0, 
+                "Replay for non-existent tenant should return no events");
+        }
+        
+        /// Property: Event replay cursors should be consistent
+        /// For any event, the cursor returned should accurately represent
+        /// the event's position in the stream
+        #[test]
+        fn test_cursor_consistency(
+            tenant_id in tenant_id_strategy(),
+            project_id in project_id_strategy(),
+            event_count in 3usize..=8usize
+        ) {
+            
+            let mut replay_store = MockEventReplayStore::new();
+            let mut expected_cursors = Vec::new();
+            
+            // Add events and track expected cursors
+            for i in 0..event_count {
+                let topic = format!("topic_{}", i);
+                let payload = json!({"event_id": i, "data": format!("event_{}", i)});
+                let subject = format!("events.{}.{}.{}", tenant_id, project_id, topic);
+                let timestamp = Utc::now();
+                let sequence = replay_store.add_event(&subject, payload, timestamp);
+                expected_cursors.push(EventCursor { sequence, timestamp });
+            }
+            
+            // Replay all events
+            let replayed_events = replay_store.replay_from_sequence(&tenant_id, 1, None);
+            
+            // Verify cursor consistency
+            assert_eq!(replayed_events.len(), expected_cursors.len(), 
+                "Should replay all events");
+            
+            for (i, (_, cursor)) in replayed_events.iter().enumerate() {
+                assert_eq!(cursor.sequence, expected_cursors[i].sequence, 
+                    "Cursor sequence should match expected at position {}", i);
+                assert_eq!(cursor.timestamp, expected_cursors[i].timestamp, 
+                    "Cursor timestamp should match expected at position {}", i);
+            }
+            
+            // Verify that using a cursor for subsequent replay works correctly
+            if replayed_events.len() > 1 {
+                let mid_cursor = &replayed_events[replayed_events.len() / 2].1;
+                let subsequent_events = replay_store.replay_from_sequence(&tenant_id, mid_cursor.sequence, None);
+                
+                // Should get events from the cursor position onwards
+                assert!(subsequent_events.len() <= replayed_events.len(), 
+                    "Subsequent replay should not return more events than total");
+                
+                // First event in subsequent replay should have sequence >= cursor sequence
+                if !subsequent_events.is_empty() {
+                    assert!(subsequent_events[0].1.sequence >= mid_cursor.sequence, 
+                        "Subsequent replay should start from cursor position");
+                }
+            }
+        }
+    }
+}

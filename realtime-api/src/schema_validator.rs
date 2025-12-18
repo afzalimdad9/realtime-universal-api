@@ -3,6 +3,46 @@
 /// database schema compliance without requiring an active database connection
 
 use std::collections::HashSet;
+use anyhow::Result;
+
+/// Schema validator for event payloads and database operations
+#[derive(Debug, Clone)]
+pub struct SchemaValidator {
+    // For now, this is a simple validator
+    // In a real implementation, this would contain JSON schemas, etc.
+}
+
+impl SchemaValidator {
+    /// Create a new schema validator
+    pub fn new() -> Self {
+        Self {}
+    }
+    
+    /// Validate an event payload against a topic schema
+    pub fn validate_event_payload(&self, topic: &str, payload: &serde_json::Value) -> Result<()> {
+        // Basic validation - ensure payload is not null and has some content
+        if payload.is_null() {
+            return Err(anyhow::anyhow!("Event payload cannot be null"));
+        }
+        
+        // Validate topic format
+        validate_event_structure("", "", topic)
+            .map_err(|e| anyhow::anyhow!("Topic validation failed: {}", e))?;
+        
+        // For now, just ensure the payload is a valid JSON object
+        if !payload.is_object() && !payload.is_array() {
+            return Err(anyhow::anyhow!("Event payload must be a JSON object or array"));
+        }
+        
+        Ok(())
+    }
+}
+
+impl Default for SchemaValidator {
+    fn default() -> Self {
+        Self::new()
+    }
+}
 
 /// Validates that a SQL query includes proper tenant isolation
 pub fn validate_tenant_isolation(tenant_id: &str, query: &str) -> bool {

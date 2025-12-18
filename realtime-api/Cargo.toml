@@ -40,6 +40,10 @@ sha2 = { workspace = true }
 # HTTP client for external APIs
 reqwest = { workspace = true }
 
+# NATS JetStream for event streaming
+async-nats = { workspace = true }
+futures-util = "0.3"
+
 # Environment and configuration
 dotenvy = { workspace = true }
 
