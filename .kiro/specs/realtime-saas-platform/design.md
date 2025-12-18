@@ -49,6 +49,7 @@ The system follows a modular architecture with clear separation of concerns:
 - **Responsibility**: Protocol handling, request routing, rate limiting
 - **Interfaces**: 
   - REST endpoints (`/events`, `/admin`, `/billing`)
+  - GraphQL endpoint (`/graphql`) with queries, mutations, and subscriptions
   - WebSocket upgrade handler (`/ws`)
   - SSE endpoint (`/sse`)
 - **Dependencies**: Authentication service, usage tracker
@@ -75,7 +76,15 @@ The system follows a modular architecture with clear separation of concerns:
   - `unsubscribe(connection_id: &str, topics: Vec<String>) -> Result<(), SubscribeError>`
 - **Dependencies**: NATS JetStream consumers
 
-#### 5. Billing Service
+#### 5. GraphQL Service
+- **Responsibility**: GraphQL schema definition, query/mutation/subscription handling
+- **Interfaces**:
+  - **Queries**: `events(filter: EventFilter) -> [Event]`, `tenants() -> [Tenant]`, `projects(tenant_id: ID) -> [Project]`
+  - **Mutations**: `publishEvent(input: EventInput) -> Event`, `createApiKey(input: ApiKeyInput) -> ApiKey`
+  - **Subscriptions**: `eventStream(topics: [String]) -> Event`, `usageUpdates(tenant_id: ID) -> UsageMetric`
+- **Dependencies**: Event service, authentication service, database
+
+#### 6. Billing Service
 - **Responsibility**: Usage tracking, Stripe integration, limit enforcement
 - **Interfaces**:
   - `track_usage(tenant_id: &str, metric: UsageMetric, quantity: u64)`
@@ -351,6 +360,20 @@ pub enum BillingPlan {
 *For any* failed event processing, events should be routed to dead letter queues
 **Validates: Requirements 10.4**
 
+### GraphQL API Properties
+
+**Property 33: GraphQL query tenant isolation**
+*For any* GraphQL query requesting tenant-scoped data, the system should enforce tenant isolation and only return data belonging to the authenticated tenant
+**Validates: Requirements 1.3**
+
+**Property 34: GraphQL mutation authentication**
+*For any* GraphQL mutation operation, the system should validate authentication credentials and enforce scope-based permissions before executing the mutation
+**Validates: Requirements 1.1, 1.4**
+
+**Property 35: GraphQL subscription real-time delivery**
+*For any* GraphQL subscription to event topics, the system should deliver events in real-time to all active subscribers with proper tenant isolation
+**Validates: Requirements 2.2**
+
 ## Error Handling
 
 ### Error Categories
@@ -457,6 +480,7 @@ tests/
 ### Backend Core
 - **Language**: Rust (latest stable)
 - **Framework**: Axum 0.7+ for HTTP/WebSocket/SSE handling
+- **GraphQL**: async-graphql 7.0+ for GraphQL API with subscriptions support
 - **Runtime**: Tokio for async execution
 - **Database ORM**: SQLx for type-safe PostgreSQL queries
 - **Authentication**: `jsonwebtoken` crate for JWT handling
