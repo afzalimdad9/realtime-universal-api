@@ -8,6 +8,7 @@ pub struct Config {
     pub database: DatabaseConfig,
     pub nats: NatsConfig,
     pub observability: ObservabilityConfig,
+    pub jwt_secret: String,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -66,6 +67,8 @@ impl Config {
                 log_level: env::var("RUST_LOG")
                     .unwrap_or_else(|_| "info".to_string()),
             },
+            jwt_secret: env::var("JWT_SECRET")
+                .unwrap_or_else(|_| "default_jwt_secret_change_in_production".to_string()),
         };
         
         Ok(config)

@@ -925,39 +925,43 @@ mod rate_limiting_properties {
 mod nats_jetstream_persistence_properties {
     use proptest::prelude::*;
     use serde_json::json;
-    use std::collections::HashMap;
     
     // Simulate NATS JetStream persistence
     #[derive(Debug, Clone)]
     struct MockJetStreamStore {
-        events: HashMap<String, (serde_json::Value, u64)>, // (event_data, sequence)
+        events: Vec<(String, serde_json::Value, u64)>, // (subject, event_data, sequence)
         next_sequence: u64,
     }
     
     impl MockJetStreamStore {
         fn new() -> Self {
             Self {
-                events: HashMap::new(),
+                events: Vec::new(),
                 next_sequence: 1,
             }
         }
         
         fn persist_event(&mut self, subject: &str, event_data: serde_json::Value) -> Result<u64, String> {
             let sequence = self.next_sequence;
-            self.events.insert(subject.to_string(), (event_data, sequence));
+            self.events.push((subject.to_string(), event_data, sequence));
             self.next_sequence += 1;
             Ok(sequence)
         }
         
-        fn get_event(&self, subject: &str) -> Option<&(serde_json::Value, u64)> {
-            self.events.get(subject)
+        fn get_event(&self, subject: &str) -> Option<(serde_json::Value, u64)> {
+            // Find the last event with this subject (most recent)
+            self.events
+                .iter()
+                .rev()
+                .find(|(subj, _, _)| subj == subject)
+                .map(|(_, data, seq)| (data.clone(), *seq))
         }
         
         fn get_events_by_tenant(&self, tenant_id: &str) -> Vec<(String, serde_json::Value, u64)> {
             self.events
                 .iter()
-                .filter(|(subject, _)| subject.starts_with(&format!("events.{}", tenant_id)))
-                .map(|(subject, (data, seq))| (subject.clone(), data.clone(), *seq))
+                .filter(|(subject, _, _)| subject.starts_with(&format!("events.{}", tenant_id)))
+                .map(|(subject, data, seq)| (subject.clone(), data.clone(), *seq))
                 .collect()
         }
         
@@ -1054,16 +1058,18 @@ mod nats_jetstream_persistence_properties {
         fn test_event_persistence_ordering(
             tenant_id in tenant_id_strategy(),
             project_id in project_id_strategy(),
+            event_count in 1usize..=10usize,
             topics in prop::collection::vec(topic_strategy(), 1..=10),
             payloads in prop::collection::vec(event_payload_strategy(), 1..=10)
         ) {
-            prop_assume!(topics.len() == payloads.len());
+            // Take the minimum length to ensure we have matching pairs
+            let count = event_count.min(topics.len()).min(payloads.len());
             
             let mut jetstream_store = MockJetStreamStore::new();
             let mut sequences = Vec::new();
             
             // Persist multiple events
-            for (i, (topic, payload)) in topics.iter().zip(payloads.iter()).enumerate() {
+            for (i, (topic, payload)) in topics.iter().take(count).zip(payloads.iter().take(count)).enumerate() {
                 let subject = format!("events.{}.{}.{}", tenant_id, project_id, topic);
                 let event_data = json!({
                     "id": format!("event_{}", i),
@@ -1087,7 +1093,7 @@ mod nats_jetstream_persistence_properties {
             }
             
             // Verify all events were persisted
-            assert_eq!(jetstream_store.event_count(), topics.len(), 
+            assert_eq!(jetstream_store.event_count(), count, 
                 "All events should be persisted");
         }
         

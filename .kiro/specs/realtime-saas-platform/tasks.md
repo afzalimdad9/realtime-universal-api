@@ -116,22 +116,32 @@ This implementation plan converts the Realtime SaaS Platform design into actiona
   - **Property 30: Cursor-based event replay**
   - **Validates: Requirements 10.2**
 
-- [ ] 5. Create REST API endpoints
+- [x] 5. Create REST API endpoints
+
+
+
+
   - Implement POST /events endpoint for event publishing
   - Add event payload validation against topic schemas
   - Create admin endpoints for tenant and API key management
   - Implement billing endpoints for usage reporting and Stripe webhooks
   - _Requirements: 1.1, 1.2, 4.3, 4.4, 5.2_
 
-- [ ] 5.1 Write property test for event validation
+- [x] 5.1 Write property test for event validation
+
   - **Property 2: Event validation consistency**
   - **Validates: Requirements 1.2**
 
-- [ ] 5.2 Write property test for authenticated event acceptance
+
+- [x] 5.2 Write property test for authenticated event acceptance
+
   - **Property 1: Authenticated event acceptance**
   - **Validates: Requirements 1.1**
 
-- [ ] 6. Checkpoint - Ensure all tests pass
+- [x] 6. Checkpoint - Ensure all tests pass
+
+
+
   - Ensure all tests pass, ask the user if questions arise.
 
 - [ ] 7. Implement WebSocket connection handling
