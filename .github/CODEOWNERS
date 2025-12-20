@@ -1,0 +1,33 @@
+# Global code owners
+* @maintainer-team
+
+# Rust/Cargo specific files
+Cargo.toml @rust-team @maintainer-team
+Cargo.lock @rust-team @maintainer-team
+**/Cargo.toml @rust-team
+
+# API and core logic
+/realtime-api/src/ @backend-team @maintainer-team
+/realtime-api/src/auth.rs @security-team @backend-team
+/realtime-api/src/database.rs @database-team @backend-team
+
+# Database migrations
+/realtime-api/migrations/ @database-team @maintainer-team
+/scripts/init-db.sql @database-team @maintainer-team
+
+# CI/CD and infrastructure
+/.github/workflows/ @devops-team @maintainer-team
+/docker-compose.yml @devops-team @maintainer-team
+/Dockerfile @devops-team @maintainer-team
+
+# Documentation
+/README.md @docs-team @maintainer-team
+/CONTRIBUTING.md @docs-team @maintainer-team
+*.md @docs-team
+
+# Security and configuration
+/.env.example @security-team @maintainer-team
+/.gitignore @maintainer-team
+
+# Tests
+/realtime-api/tests/ @qa-team @backend-team
