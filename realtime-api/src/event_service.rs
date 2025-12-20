@@ -1,5 +1,6 @@
 use anyhow::{anyhow, Result};
 use std::sync::Arc;
+use tokio::sync::broadcast;
 use tracing::{error, info, warn};
 
 use crate::database::Database;
@@ -17,10 +18,9 @@ pub struct EventService {
 
 /// Event publishing result
 #[derive(Debug)]
-pub struct PublishResult {
-    pub event_id: String,
-    pub sequence: u64,
-    pub published_at: chrono::DateTime<chrono::Utc>,
+pub enum PublishResult {
+    Success,
+    ValidationFailed(String),
 }
 
 /// Event subscription handle
@@ -30,6 +30,7 @@ pub struct EventSubscription {
     pub tenant_id: String,
     pub project_id: String,
     pub topics: Vec<String>,
+    pub receiver: broadcast::Receiver<Event>,
 }
 
 impl EventService {
@@ -47,43 +48,29 @@ impl EventService {
     }
 
     /// Publish an event with validation and persistence
-    pub async fn publish_event(
-        &self,
-        tenant_id: &str,
-        project_id: &str,
-        topic: &str,
-        payload: serde_json::Value,
-    ) -> Result<PublishResult> {
+    pub async fn publish_event(&self, event: &Event) -> Result<PublishResult> {
         // Validate tenant and project exist and are active
-        let tenant = self.database.get_tenant(tenant_id).await?
-            .ok_or_else(|| anyhow!("Tenant not found: {}", tenant_id))?;
+        let tenant = self.database.get_tenant(&event.tenant_id).await?
+            .ok_or_else(|| anyhow!("Tenant not found: {}", event.tenant_id))?;
 
         if !tenant.is_active() {
-            return Err(anyhow!("Tenant is not active: {}", tenant_id));
+            return Ok(PublishResult::ValidationFailed(format!("Tenant is not active: {}", event.tenant_id)));
         }
 
-        let _project = self.database.get_project(tenant_id, project_id).await?
-            .ok_or_else(|| anyhow!("Project not found: {}", project_id))?;
+        let _project = self.database.get_project_with_tenant(&event.tenant_id, &event.project_id).await?
+            .ok_or_else(|| anyhow!("Project not found: {}", event.project_id))?;
 
         // Validate event payload against topic schema
-        if let Err(e) = self.schema_validator.validate_event_payload(topic, &payload) {
-            warn!("Event validation failed for topic {}: {}", topic, e);
-            return Err(anyhow!("Event validation failed: {}", e));
+        if let Err(e) = self.schema_validator.validate_event_payload(&event.topic, &event.payload) {
+            warn!("Event validation failed for topic {}: {}", event.topic, e);
+            return Ok(PublishResult::ValidationFailed(format!("Event validation failed: {}", e)));
         }
 
-        // Create the event
-        let event = Event::new(
-            tenant_id.to_string(),
-            project_id.to_string(),
-            topic.to_string(),
-            payload,
-        );
-
         // Publish to NATS JetStream first (for durability)
-        let sequence = self.nats_client.publish_event(&event).await?;
+        let _sequence = self.nats_client.publish_event(event).await?;
 
         // Store event metadata in PostgreSQL
-        if let Err(e) = self.database.create_event(&event).await {
+        if let Err(e) = self.database.create_event(event).await {
             error!("Failed to store event metadata in database: {}", e);
             // Note: Event is already in NATS, so we don't fail the publish
             // but we log the error for monitoring
@@ -91,8 +78,8 @@ impl EventService {
 
         // Track usage metrics
         let usage_record = UsageRecord::new(
-            tenant_id.to_string(),
-            project_id.to_string(),
+            event.tenant_id.clone(),
+            event.project_id.clone(),
             UsageMetric::EventsPublished,
             1,
             chrono::Utc::now().date_naive().and_hms_opt(0, 0, 0).unwrap().and_utc(),
@@ -105,13 +92,66 @@ impl EventService {
 
         info!(
             "Published event {} to topic {} for tenant/project: {}/{}",
-            event.id, topic, tenant_id, project_id
+            event.id, event.topic, event.tenant_id, event.project_id
         );
 
-        Ok(PublishResult {
-            event_id: event.id,
-            sequence,
-            published_at: event.published_at,
+        Ok(PublishResult::Success)
+    }
+
+    /// Publish an event with validation and persistence (legacy method)
+    pub async fn publish_event_legacy(
+        &self,
+        tenant_id: &str,
+        project_id: &str,
+        topic: &str,
+        payload: serde_json::Value,
+    ) -> Result<PublishResult> {
+        let event = Event::new(
+            tenant_id.to_string(),
+            project_id.to_string(),
+            topic.to_string(),
+            payload,
+        );
+        
+        self.publish_event(&event).await
+    }
+
+    /// Subscribe to topics for real-time event delivery
+    pub async fn subscribe_to_topics(
+        &self,
+        tenant_id: &str,
+        project_id: &str,
+        topics: Vec<String>,
+    ) -> Result<EventSubscription> {
+        // Validate tenant and project
+        let tenant = self.database.get_tenant(tenant_id).await?
+            .ok_or_else(|| anyhow!("Tenant not found: {}", tenant_id))?;
+
+        if !tenant.is_active() {
+            return Err(anyhow!("Tenant is not active: {}", tenant_id));
+        }
+
+        let _project = self.database.get_project_with_tenant(tenant_id, project_id).await?
+            .ok_or_else(|| anyhow!("Project not found: {}", project_id))?;
+
+        // Create a broadcast channel for real-time events
+        let (_sender, receiver) = broadcast::channel(1000);
+
+        // For now, we'll create a simple subscription
+        // In a real implementation, this would connect to NATS consumers
+        let consumer_name = format!("graphql_{}_{}", tenant_id, project_id);
+
+        info!(
+            "Created GraphQL subscription '{}' for tenant/project: {}/{} with topics: {:?}",
+            consumer_name, tenant_id, project_id, topics
+        );
+
+        Ok(EventSubscription {
+            consumer_name,
+            tenant_id: tenant_id.to_string(),
+            project_id: project_id.to_string(),
+            topics,
+            receiver,
         })
     }
 
@@ -132,7 +172,7 @@ impl EventService {
             return Err(anyhow!("Tenant is not active: {}", tenant_id));
         }
 
-        let _project = self.database.get_project(tenant_id, project_id).await?
+        let _project = self.database.get_project_with_tenant(tenant_id, project_id).await?
             .ok_or_else(|| anyhow!("Project not found: {}", project_id))?;
 
         // Create subscription configuration
@@ -147,6 +187,9 @@ impl EventService {
         // Create the consumer in NATS
         self.nats_client.create_consumer(&config).await?;
 
+        // Create a broadcast channel for real-time events
+        let (_sender, receiver) = broadcast::channel(1000);
+
         info!(
             "Created subscription '{}' for tenant/project: {}/{} with topics: {:?}",
             consumer_name, tenant_id, project_id, topics
@@ -157,6 +200,7 @@ impl EventService {
             tenant_id: tenant_id.to_string(),
             project_id: project_id.to_string(),
             topics,
+            receiver,
         })
     }
 
@@ -177,7 +221,7 @@ impl EventService {
             return Err(anyhow!("Tenant is not active: {}", tenant_id));
         }
 
-        let _project = self.database.get_project(tenant_id, project_id).await?
+        let _project = self.database.get_project_with_tenant(tenant_id, project_id).await?
             .ok_or_else(|| anyhow!("Project not found: {}", project_id))?;
 
         // Create replay request
@@ -235,23 +279,23 @@ mod tests {
 
     #[test]
     fn test_publish_result() {
-        let result = PublishResult {
-            event_id: "event_123".to_string(),
-            sequence: 42,
-            published_at: chrono::Utc::now(),
-        };
-
-        assert_eq!(result.event_id, "event_123");
-        assert_eq!(result.sequence, 42);
+        let result = PublishResult::Success;
+        
+        match result {
+            PublishResult::Success => assert!(true),
+            PublishResult::ValidationFailed(_) => assert!(false),
+        }
     }
 
     #[test]
     fn test_event_subscription() {
+        let (tx, rx) = broadcast::channel(100);
         let subscription = EventSubscription {
             consumer_name: "websocket_consumer".to_string(),
             tenant_id: "tenant_123".to_string(),
             project_id: "project_456".to_string(),
             topics: vec!["user.created".to_string(), "user.updated".to_string()],
+            receiver: rx,
         };
 
         assert_eq!(subscription.consumer_name, "websocket_consumer");

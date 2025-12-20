@@ -4,7 +4,7 @@ resolver = "2"
 
 [workspace.dependencies]
 # Web framework and async runtime
-axum = "0.7"
+axum = { version = "0.7", features = ["ws"] }
 tokio = { version = "1.0", features = ["full"] }
 tower = "0.4"
 tower-http = { version = "0.5", features = ["cors", "trace"] }
@@ -41,6 +41,13 @@ reqwest = { version = "0.11", features = ["json"] }
 
 # NATS JetStream for event streaming
 async-nats = "0.33"
+
+# GraphQL
+async-graphql = { version = "7.0", features = ["chrono", "uuid"] }
+async-graphql-axum = "7.0"
+
+# Streaming
+tokio-stream = { version = "0.1", features = ["sync"] }
 
 # Environment and configuration
 dotenvy = "0.15"

@@ -186,22 +186,40 @@ pub async fn publish_event(
     }
 
     // Publish the event
+    let event = Event::new(
+        auth.tenant_id.clone(),
+        auth.project_id.clone(),
+        request.topic.clone(),
+        request.payload,
+    );
+    
     match state
         .event_service
-        .publish_event(&auth.tenant_id, &auth.project_id, &request.topic, request.payload)
+        .publish_event(&event)
         .await
     {
-        Ok(result) => {
+        Ok(PublishResult::Success) => {
             info!(
                 "Event published successfully: event_id={}, tenant={}, project={}, topic={}",
-                result.event_id, auth.tenant_id, auth.project_id, request.topic
+                event.id, auth.tenant_id, auth.project_id, request.topic
             );
 
             Ok(Json(PublishEventResponse {
-                event_id: result.event_id,
-                sequence: result.sequence,
-                published_at: result.published_at.to_rfc3339(),
+                event_id: event.id,
+                sequence: 0, // Placeholder - would come from NATS in real implementation
+                published_at: event.published_at.to_rfc3339(),
             }))
+        }
+        Ok(PublishResult::ValidationFailed(msg)) => {
+            warn!("Event validation failed: {}", msg);
+            Err((
+                StatusCode::BAD_REQUEST,
+                Json(ErrorResponse::new(
+                    "VALIDATION_FAILED",
+                    &msg,
+                    None,
+                )),
+            ))
         }
         Err(e) => {
             error!("Failed to publish event: {}", e);

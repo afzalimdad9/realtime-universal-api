@@ -44,6 +44,13 @@ reqwest = { workspace = true }
 async-nats = { workspace = true }
 futures-util = "0.3"
 
+# GraphQL
+async-graphql = { workspace = true }
+async-graphql-axum = { workspace = true }
+
+# Streaming
+tokio-stream = { workspace = true }
+
 # Environment and configuration
 dotenvy = { workspace = true }
 

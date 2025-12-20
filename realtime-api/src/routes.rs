@@ -1,4 +1,5 @@
 use axum::{
+    extract::{Extension, ws::WebSocketUpgrade},
     middleware,
     routing::{delete, get, post},
     Router,
@@ -13,32 +14,48 @@ use crate::api::{
     create_api_key, create_tenant, get_usage_report, handle_stripe_webhook, health_check,
     publish_event, revoke_api_key, AppState,
 };
-use crate::auth::{api_key_auth_middleware, AuthService};
+use crate::auth::{api_key_auth_middleware, AuthContext};
+use crate::graphql::{create_schema, graphql_handler, graphql_playground, graphql_subscription_handler, ApiSchema};
 
 /// Create the main application router with all endpoints
 pub fn create_router(state: AppState) -> Router {
     // Create the auth service for middleware
     let auth_service = state.auth_service.clone();
 
+    // Create GraphQL schema
+    let schema = create_schema(
+        state.database.clone(),
+        state.event_service.clone(),
+        state.auth_service.clone(),
+    );
+
     Router::new()
         // Public endpoints (no authentication required)
         .route("/health", get(health_check))
         .route("/billing/stripe-webhook", post(handle_stripe_webhook))
         
+        // GraphQL playground (development only - should be disabled in production)
+        .route("/graphql/playground", get(graphql_playground))
+        
         // Protected endpoints (require authentication)
+        // TODO: Fix axum version conflicts for GraphQL routes
+        // .route("/graphql", post(graphql_handler_with_auth))
+        // .route("/graphql/ws", get(graphql_subscription_handler_with_auth))
         .route("/events", post(publish_event))
         .route("/admin/tenants", post(create_tenant))
         .route("/admin/api-keys", post(create_api_key))
         .route("/admin/api-keys/:key_id", delete(revoke_api_key))
         .route("/billing/usage", get(get_usage_report))
         
-        // Apply authentication middleware to protected routes
+        // Apply authentication middleware to protected routes (except playground)
+        .layer(middleware::from_fn_with_state(
+            auth_service,
+            api_key_auth_middleware,
+        ))
+        
+        // Apply global middleware
         .layer(
             ServiceBuilder::new()
-                .layer(middleware::from_fn_with_state(
-                    auth_service,
-                    api_key_auth_middleware,
-                ))
                 .layer(TraceLayer::new_for_http())
                 .layer(
                     CorsLayer::new()
@@ -48,6 +65,7 @@ pub fn create_router(state: AppState) -> Router {
                 ),
         )
         .with_state(state)
+        .layer(Extension(schema))
 }
 
 /// Create a router for WebSocket connections
@@ -72,6 +90,24 @@ async fn websocket_handler() -> &'static str {
 /// SSE handler (placeholder for future implementation)
 async fn sse_handler() -> &'static str {
     "SSE endpoint - to be implemented in task 8"
+}
+
+/// GraphQL handler with authentication
+async fn graphql_handler_with_auth(
+    Extension(auth_context): Extension<AuthContext>,
+    axum::extract::State(schema): axum::extract::State<ApiSchema>,
+    req: async_graphql_axum::GraphQLRequest,
+) -> async_graphql_axum::GraphQLResponse {
+    graphql_handler(auth_context, axum::extract::State(schema), req).await
+}
+
+/// GraphQL subscription handler with authentication
+async fn graphql_subscription_handler_with_auth(
+    Extension(auth_context): Extension<AuthContext>,
+    axum::extract::State(schema): axum::extract::State<ApiSchema>,
+    ws: WebSocketUpgrade,
+) -> axum::response::Response {
+    graphql_subscription_handler(auth_context, axum::extract::State(schema), ws).await
 }
 
 #[cfg(test)]

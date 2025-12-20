@@ -6,6 +6,7 @@ mod auth;
 mod config;
 mod database;
 mod event_service;
+mod graphql;
 mod models;
 mod nats;
 mod observability;
