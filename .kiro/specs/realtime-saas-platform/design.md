@@ -475,6 +475,89 @@ tests/
 └── fixtures/            # Test data and utilities
 ```
 
+## Protocol Support Roadmap
+
+The platform is designed to support a comprehensive range of communication protocols, providing a universal communication hub for modern applications.
+
+### HTTP / Application Layer
+- **HTTP/1.0** ⏳ - Legacy HTTP support for older clients
+- **HTTP/1.1** ✅ - Current primary HTTP protocol (Axum)
+- **HTTP/2** ⏳ - Multiplexed HTTP with server push capabilities
+- **HTTP/3** ⏳ - QUIC-based HTTP for improved performance
+- **HTTPS** ✅ - TLS-encrypted HTTP (production deployment)
+- **REST / RESTful HTTP** ✅ - Current API implementation
+- **GraphQL** ✅ - Query language with subscriptions
+- **GraphQL Subscriptions** ✅ - Real-time GraphQL subscriptions
+- **SOAP** ⏳ - XML-based web services protocol
+- **JSON-RPC** ⏳ - Remote procedure calls over JSON
+- **XML-RPC** ⏳ - Remote procedure calls over XML
+- **OpenAPI-based APIs** ✅ - API documentation and validation
+- **HAL** ⏳ - Hypertext Application Language
+- **OData** ⏳ - Open Data Protocol for REST APIs
+
+### RPC / Binary APIs
+- **gRPC** ⏳ - High-performance RPC framework
+- **gRPC-Web** ⏳ - gRPC for web browsers
+- **Apache Thrift** ⏳ - Cross-language RPC framework
+- **Cap'n Proto RPC** ⏳ - Infinitely fast serialization
+- **Avro RPC** ⏳ - Data serialization with RPC
+- **Finagle** ⏳ - Fault-tolerant RPC system
+- **Dubbo** ⏳ - High-performance Java RPC framework
+
+### Realtime / Streaming
+- **WebSocket** ✅ - Full-duplex communication (current implementation)
+- **Secure WebSocket (WSS)** ✅ - TLS-encrypted WebSocket
+- **Server-Sent Events (SSE)** ✅ - Server-to-client event streaming
+- **HTTP Long Polling** ⏳ - Simulated real-time over HTTP
+- **WebTransport** ⏳ - Modern transport protocol over HTTP/3
+- **WebRTC Data Channels** ⏳ - Peer-to-peer data channels
+- **Raw TCP sockets** ⏳ - Direct TCP connection handling
+- **Raw UDP sockets** ⏳ - Direct UDP packet handling
+- **QUIC streams** ⏳ - Multiplexed streams over QUIC
+
+### Messaging / Pub-Sub
+- **NATS** ✅ - Lightweight messaging system (current implementation)
+- **NATS JetStream** ✅ - Persistent messaging with NATS
+- **Kafka protocol** ⏳ - Distributed streaming platform
+- **AMQP** ⏳ - Advanced Message Queuing Protocol
+- **MQTT** ⏳ - Lightweight IoT messaging protocol
+- **STOMP** ⏳ - Simple Text Oriented Messaging Protocol
+- **ZeroMQ** ⏳ - High-performance asynchronous messaging
+- **Pulsar protocol** ⏳ - Cloud-native messaging and streaming
+- **Redis Pub/Sub** ⏳ - Redis publish/subscribe messaging
+- **Redis Streams** ⏳ - Redis append-only log data structure
+
+### File / Transfer
+- **FTP** ⏳ - File Transfer Protocol
+- **FTPS** ⏳ - FTP over TLS/SSL
+- **SFTP** ⏳ - SSH File Transfer Protocol
+- **SCP** ⏳ - Secure Copy Protocol
+- **TFTP** ⏳ - Trivial File Transfer Protocol
+- **WebDAV** ⏳ - Web Distributed Authoring and Versioning
+
+### Discovery / Control
+- **DNS** ⏳ - Domain Name System queries
+- **mDNS** ⏳ - Multicast DNS for local discovery
+- **Consul** ⏳ - Service discovery and configuration
+- **etcd API** ⏳ - Distributed key-value store
+- **ZooKeeper protocol** ⏳ - Distributed coordination service
+
+### Transport / Network
+- **TCP** ✅ - Transmission Control Protocol (underlying transport)
+- **UDP** ⏳ - User Datagram Protocol
+- **QUIC** ⏳ - Quick UDP Internet Connections
+- **SCTP** ⏳ - Stream Control Transmission Protocol
+- **IP** ✅ - Internet Protocol (underlying network layer)
+- **ICMP** ⏳ - Internet Control Message Protocol
+
+### Security / Auth Related
+- **OAuth 2.0** ⏳ - Authorization framework
+- **OpenID Connect** ⏳ - Identity layer on OAuth 2.0
+- **SAML** ⏳ - Security Assertion Markup Language
+- **JWT** ✅ - JSON Web Tokens (current implementation)
+- **mTLS** ⏳ - Mutual TLS authentication
+- **Kerberos** ⏳ - Network authentication protocol
+
 ## Technology Stack
 
 ### Backend Core
