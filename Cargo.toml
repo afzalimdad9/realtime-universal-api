@@ -33,7 +33,7 @@ thiserror = "1.0"
 # Authentication and security
 jsonwebtoken = "9.0"
 bcrypt = "0.15"
-rand = "0.8"
+rand = "0.9"
 sha2 = "0.10"
 
 # HTTP client for external APIs
