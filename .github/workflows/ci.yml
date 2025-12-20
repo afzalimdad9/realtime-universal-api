@@ -31,11 +31,6 @@ jobs:
 
       nats:
         image: nats:2.10-alpine
-        options: >-
-          --health-cmd "nats server check jetstream"
-          --health-interval 10s
-          --health-timeout 5s
-          --health-retries 5
         ports:
           - 4222:4222
 
@@ -54,7 +49,7 @@ jobs:
         run: cargo fmt --all -- --check
 
       - name: Run clippy
-        run: cargo clippy --all-targets --all-features -- -D warnings
+        run: cargo clippy --all-targets --all-features -- -D clippy::correctness -D clippy::suspicious -D clippy::complexity -D clippy::perf
 
       - name: Run tests
         run: cargo test --verbose

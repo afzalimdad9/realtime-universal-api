@@ -25,7 +25,10 @@ pub enum AuthError {
     #[error("API key expired")]
     ExpiredApiKey,
     #[error("Insufficient scope: required {required}, has {available:?}")]
-    InsufficientScope { required: String, available: Vec<String> },
+    InsufficientScope {
+        required: String,
+        available: Vec<String>,
+    },
     #[error("Rate limit exceeded")]
     RateLimitExceeded,
     #[error("Invalid JWT token")]
@@ -45,13 +48,13 @@ pub enum AuthError {
 /// JWT Claims structure
 #[derive(Debug, Serialize, Deserialize, Clone)]
 pub struct Claims {
-    pub sub: String,      // Subject (user ID)
+    pub sub: String, // Subject (user ID)
     pub tenant_id: String,
     pub project_id: String,
     pub scopes: Vec<String>,
-    pub exp: i64,         // Expiration time
-    pub iat: i64,         // Issued at
-    pub iss: String,      // Issuer
+    pub exp: i64,    // Expiration time
+    pub iat: i64,    // Issued at
+    pub iss: String, // Issuer
 }
 
 /// Authentication context extracted from requests
@@ -101,7 +104,7 @@ impl AuthService {
         use rand::Rng;
         const CHARSET: &[u8] = b"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789";
         const KEY_LENGTH: usize = 64;
-        
+
         let mut rng = rand::thread_rng();
         let key: String = (0..KEY_LENGTH)
             .map(|_| {
@@ -109,7 +112,7 @@ impl AuthService {
                 CHARSET[idx] as char
             })
             .collect();
-        
+
         format!("rtp_{}", key) // Prefix for realtime platform
     }
 
@@ -145,7 +148,7 @@ impl AuthService {
         let raw_key = Self::generate_api_key();
         // Use SHA-256 hash for database lookup
         let lookup_hash = Self::hash_api_key_for_lookup(&raw_key);
-        
+
         let api_key = ApiKey::new(
             tenant_id,
             project_id,
@@ -153,14 +156,17 @@ impl AuthService {
             scopes,
             rate_limit_per_sec,
         );
-        
+
         // Set expiration if provided
         let mut api_key = api_key;
         api_key.expires_at = expires_at;
-        
+
         self.database.create_api_key(&api_key).await?;
-        
-        info!("Created API key {} for tenant {}", api_key.id, api_key.tenant_id);
+
+        info!(
+            "Created API key {} for tenant {}",
+            api_key.id, api_key.tenant_id
+        );
         Ok((raw_key, api_key))
     }
 
@@ -168,11 +174,14 @@ impl AuthService {
     pub async fn validate_api_key(&self, key: &str) -> Result<AuthContext, AuthError> {
         // Use SHA-256 hash for database lookup
         let lookup_hash = Self::hash_api_key_for_lookup(key);
-        
+
         // Get API key from database by lookup hash
-        let api_key = self.database.get_api_key_by_hash(&lookup_hash).await?
+        let api_key = self
+            .database
+            .get_api_key_by_hash(&lookup_hash)
+            .await?
             .ok_or(AuthError::InvalidApiKey)?;
-        
+
         // Verify the key is still valid
         if !api_key.is_valid() {
             if !api_key.is_active {
@@ -181,18 +190,22 @@ impl AuthService {
                 return Err(AuthError::ExpiredApiKey);
             }
         }
-        
+
         // Check if tenant is active
-        let tenant = self.database.get_tenant(&api_key.tenant_id).await?
+        let tenant = self
+            .database
+            .get_tenant(&api_key.tenant_id)
+            .await?
             .ok_or(AuthError::InvalidApiKey)?;
-        
+
         if !tenant.is_active() {
             return Err(AuthError::TenantSuspended);
         }
-        
+
         // Check rate limits
-        self.check_rate_limit(&api_key.id, api_key.rate_limit_per_sec as u32).await?;
-        
+        self.check_rate_limit(&api_key.id, api_key.rate_limit_per_sec as u32)
+            .await?;
+
         Ok(AuthContext {
             tenant_id: api_key.tenant_id,
             project_id: api_key.project_id,
@@ -213,7 +226,7 @@ impl AuthService {
     ) -> Result<String, AuthError> {
         let now = Utc::now();
         let exp = now + Duration::hours(expires_in_hours);
-        
+
         let claims = Claims {
             sub: user_id,
             tenant_id,
@@ -223,13 +236,13 @@ impl AuthService {
             iat: now.timestamp(),
             iss: "realtime-platform".to_string(),
         };
-        
+
         let token = encode(
             &Header::default(),
             &claims,
             &EncodingKey::from_secret(self.jwt_secret.as_ref()),
         )?;
-        
+
         Ok(token)
     }
 
@@ -240,25 +253,30 @@ impl AuthService {
             &DecodingKey::from_secret(self.jwt_secret.as_ref()),
             &Validation::default(),
         )?;
-        
+
         let claims = token_data.claims;
-        
+
         // Check if token is expired
         let now = Utc::now().timestamp();
         if claims.exp < now {
             return Err(AuthError::InvalidJwt);
         }
-        
+
         // Check if tenant is active
-        let tenant = self.database.get_tenant(&claims.tenant_id).await?
+        let tenant = self
+            .database
+            .get_tenant(&claims.tenant_id)
+            .await?
             .ok_or(AuthError::InvalidJwt)?;
-        
+
         if !tenant.is_active() {
             return Err(AuthError::TenantSuspended);
         }
-        
+
         // Convert scope strings back to Scope enum
-        let scopes: Vec<Scope> = claims.scopes.iter()
+        let scopes: Vec<Scope> = claims
+            .scopes
+            .iter()
             .filter_map(|s| match s.as_str() {
                 "EventsPublish" => Some(Scope::EventsPublish),
                 "EventsSubscribe" => Some(Scope::EventsSubscribe),
@@ -268,13 +286,15 @@ impl AuthService {
                 _ => None,
             })
             .collect();
-        
+
         Ok(AuthContext {
             tenant_id: claims.tenant_id,
             project_id: claims.project_id,
             scopes,
             rate_limit_per_sec: 1000, // Default rate limit for JWT tokens
-            auth_type: AuthType::Jwt { user_id: claims.sub },
+            auth_type: AuthType::Jwt {
+                user_id: claims.sub,
+            },
         })
     }
 
@@ -291,31 +311,43 @@ impl AuthService {
     }
 
     /// Check rate limits for a given identifier
-    async fn check_rate_limit(&self, identifier: &str, limit_per_sec: u32) -> Result<(), AuthError> {
+    async fn check_rate_limit(
+        &self,
+        identifier: &str,
+        limit_per_sec: u32,
+    ) -> Result<(), AuthError> {
         let now = Utc::now();
         let mut rate_limits = self.rate_limits.lock().unwrap();
-        
-        let entry = rate_limits.entry(identifier.to_string()).or_insert(RateLimitEntry {
-            count: 0,
-            window_start: now,
-        });
-        
+
+        let entry = rate_limits
+            .entry(identifier.to_string())
+            .or_insert(RateLimitEntry {
+                count: 0,
+                window_start: now,
+            });
+
         // Reset window if more than 1 second has passed
         if now.signed_duration_since(entry.window_start).num_seconds() >= 1 {
             entry.count = 0;
             entry.window_start = now;
         }
-        
+
         // Check if limit is exceeded
         if entry.count >= limit_per_sec {
-            warn!("Rate limit exceeded for {}: {} requests/sec", identifier, entry.count);
+            warn!(
+                "Rate limit exceeded for {}: {} requests/sec",
+                identifier, entry.count
+            );
             return Err(AuthError::RateLimitExceeded);
         }
-        
+
         // Increment counter
         entry.count += 1;
-        
-        debug!("Rate limit check passed for {}: {}/{} requests", identifier, entry.count, limit_per_sec);
+
+        debug!(
+            "Rate limit check passed for {}: {}/{} requests",
+            identifier, entry.count, limit_per_sec
+        );
         Ok(())
     }
 
@@ -330,10 +362,9 @@ impl AuthService {
     pub fn cleanup_rate_limits(&self) {
         let now = Utc::now();
         let mut rate_limits = self.rate_limits.lock().unwrap();
-        
-        rate_limits.retain(|_, entry| {
-            now.signed_duration_since(entry.window_start).num_seconds() < 60
-        });
+
+        rate_limits
+            .retain(|_, entry| now.signed_duration_since(entry.window_start).num_seconds() < 60);
     }
 }
 
@@ -344,7 +375,7 @@ pub fn extract_auth_header(headers: &HeaderMap) -> Result<String, AuthError> {
         .ok_or(AuthError::MissingAuth)?
         .to_str()
         .map_err(|_| AuthError::MissingAuth)?;
-    
+
     if let Some(token) = auth_header.strip_prefix("Bearer ") {
         Ok(token.to_string())
     } else if let Some(key) = auth_header.strip_prefix("ApiKey ") {
@@ -361,7 +392,7 @@ pub async fn api_key_auth_middleware(
     next: Next,
 ) -> Result<Response, StatusCode> {
     let headers = request.headers();
-    
+
     match extract_auth_header(headers) {
         Ok(auth_value) => {
             // Try to validate as API key first
@@ -406,7 +437,17 @@ pub async fn api_key_auth_middleware(
 }
 
 /// Middleware for scope-based authorization
-pub fn require_scope(required_scope: Scope) -> impl Clone + Fn(AuthContext, Request, Next) -> std::pin::Pin<Box<dyn std::future::Future<Output = Result<Response, StatusCode>> + Send>> {
+#[allow(clippy::type_complexity)]
+pub fn require_scope(
+    required_scope: Scope,
+) -> impl Clone
+       + Fn(
+    AuthContext,
+    Request,
+    Next,
+) -> std::pin::Pin<
+    Box<dyn std::future::Future<Output = Result<Response, StatusCode>> + Send>,
+> {
     move |auth_context: AuthContext, request: Request, next: Next| {
         let scope = required_scope.clone();
         Box::pin(async move {
@@ -426,7 +467,6 @@ pub fn require_scope(required_scope: Scope) -> impl Clone + Fn(AuthContext, Requ
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::models::{BillingPlan, ProjectLimits};
 
     #[test]
     fn test_generate_api_key() {
@@ -438,11 +478,11 @@ mod tests {
     #[test]
     fn test_hash_and_verify_api_key() {
         let key = "test_api_key_12345";
-        
+
         // Test lookup hash
         let lookup_hash = AuthService::hash_api_key_for_lookup(key);
         assert_eq!(lookup_hash.len(), 64); // SHA-256 produces 64 character hex string
-        
+
         // Test storage hash
         let storage_hash = AuthService::hash_api_key_for_storage(key).unwrap();
         assert!(AuthService::verify_api_key(key, &storage_hash).unwrap());
@@ -451,8 +491,8 @@ mod tests {
 
     #[test]
     fn test_scope_checking_logic() {
-        let scopes = vec![Scope::EventsPublish, Scope::EventsSubscribe];
-        
+        let scopes = [Scope::EventsPublish, Scope::EventsSubscribe];
+
         // Test scope checking logic without needing AuthService instance
         assert!(scopes.contains(&Scope::EventsPublish));
         assert!(scopes.contains(&Scope::EventsSubscribe));

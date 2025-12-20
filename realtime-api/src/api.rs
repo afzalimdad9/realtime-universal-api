@@ -13,7 +13,7 @@ use uuid::Uuid;
 use crate::auth::{AuthContext, AuthService};
 use crate::database::Database;
 use crate::event_service::{EventService, PublishResult};
-use crate::models::{ApiKey, Event, Scope, Tenant, TenantStatus, UsageMetric, UsageRecord};
+use crate::models::{Event, Scope, Tenant, UsageMetric};
 
 /// Application state shared across handlers
 #[derive(Clone)]
@@ -192,12 +192,8 @@ pub async fn publish_event(
         request.topic.clone(),
         request.payload,
     );
-    
-    match state
-        .event_service
-        .publish_event(&event)
-        .await
-    {
+
+    match state.event_service.publish_event(&event).await {
         Ok(PublishResult::Success) => {
             info!(
                 "Event published successfully: event_id={}, tenant={}, project={}, topic={}",
@@ -214,11 +210,7 @@ pub async fn publish_event(
             warn!("Event validation failed: {}", msg);
             Err((
                 StatusCode::BAD_REQUEST,
-                Json(ErrorResponse::new(
-                    "VALIDATION_FAILED",
-                    &msg,
-                    None,
-                )),
+                Json(ErrorResponse::new("VALIDATION_FAILED", &msg, None)),
             ))
         }
         Err(e) => {
@@ -267,7 +259,9 @@ pub async fn create_tenant(
 
     // Parse billing plan
     let plan = match request.plan.as_str() {
-        "free" => crate::models::BillingPlan::Free { monthly_events: 10000 },
+        "free" => crate::models::BillingPlan::Free {
+            monthly_events: 10000,
+        },
         "pro" => crate::models::BillingPlan::Pro {
             monthly_events: 100000,
             price_per_event: 0.001,
@@ -348,7 +342,7 @@ pub async fn create_api_key(
                         Some(json!({
                             "valid_scopes": [
                                 "events:publish",
-                                "events:subscribe", 
+                                "events:subscribe",
                                 "admin:read",
                                 "admin:write",
                                 "billing:read"
@@ -362,9 +356,9 @@ pub async fn create_api_key(
     }
 
     let rate_limit = request.rate_limit_per_sec.unwrap_or(100);
-    let expires_at = request.expires_in_days.map(|days| {
-        chrono::Utc::now() + chrono::Duration::days(days)
-    });
+    let expires_at = request
+        .expires_in_days
+        .map(|days| chrono::Utc::now() + chrono::Duration::days(days));
 
     // Create the API key
     match state
@@ -379,7 +373,10 @@ pub async fn create_api_key(
         .await
     {
         Ok((raw_key, api_key)) => {
-            info!("Created API key: {} for tenant: {}", api_key.id, auth.tenant_id);
+            info!(
+                "Created API key: {} for tenant: {}",
+                api_key.id, auth.tenant_id
+            );
             Ok(Json(CreateApiKeyResponse {
                 id: api_key.id,
                 key: raw_key,
@@ -420,7 +417,11 @@ pub async fn revoke_api_key(
         ));
     }
 
-    match state.auth_service.revoke_api_key(&auth.tenant_id, &key_id).await {
+    match state
+        .auth_service
+        .revoke_api_key(&auth.tenant_id, &key_id)
+        .await
+    {
         Ok(_) => {
             info!("Revoked API key: {} for tenant: {}", key_id, auth.tenant_id);
             Ok(StatusCode::NO_CONTENT)
@@ -443,7 +444,7 @@ pub async fn revoke_api_key(
 pub async fn get_usage_report(
     State(state): State<AppState>,
     Extension(auth): Extension<AuthContext>,
-    Query(query): Query<UsageQuery>,
+    Query(_query): Query<UsageQuery>,
 ) -> Result<Json<UsageReportResponse>, (StatusCode, Json<ErrorResponse>)> {
     // Check billing read permissions
     if !auth.scopes.contains(&Scope::BillingRead) && !auth.scopes.contains(&Scope::AdminRead) {
@@ -468,7 +469,11 @@ pub async fn get_usage_report(
     ];
 
     for metric in usage_metrics {
-        match state.database.get_usage_for_tenant(&auth.tenant_id, metric.clone()).await {
+        match state
+            .database
+            .get_usage_for_tenant(&auth.tenant_id, metric.clone())
+            .await
+        {
             Ok(usage) => {
                 let metric_name = match metric {
                     UsageMetric::EventsPublished => "events_published",
@@ -494,14 +499,14 @@ pub async fn get_usage_report(
 
 /// POST /billing/stripe-webhook - Handle Stripe webhooks
 pub async fn handle_stripe_webhook(
-    State(state): State<AppState>,
+    State(_state): State<AppState>,
     body: String,
 ) -> Result<StatusCode, (StatusCode, Json<ErrorResponse>)> {
     // TODO: Implement Stripe webhook signature verification
     // TODO: Handle different webhook event types (payment_succeeded, payment_failed, etc.)
-    
+
     info!("Received Stripe webhook: {}", body.len());
-    
+
     // For now, just acknowledge receipt
     // In a real implementation, this would:
     // 1. Verify the webhook signature
@@ -509,7 +514,7 @@ pub async fn handle_stripe_webhook(
     // 3. Handle different event types (payment success/failure, subscription changes)
     // 4. Update tenant status accordingly
     // 5. Trigger kill switch if payment fails
-    
+
     Ok(StatusCode::OK)
 }
 
@@ -518,7 +523,7 @@ pub async fn health_check(
     State(state): State<AppState>,
 ) -> Result<Json<Value>, (StatusCode, Json<ErrorResponse>)> {
     let is_healthy = state.event_service.is_healthy();
-    
+
     if is_healthy {
         Ok(Json(json!({
             "status": "healthy",

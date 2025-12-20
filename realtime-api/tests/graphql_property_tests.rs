@@ -4,8 +4,8 @@ use std::collections::HashMap;
 
 /// **Feature: realtime-saas-platform, Property 33: GraphQL query tenant isolation**
 /// **Validates: Requirements 1.3**
-/// 
-/// For any GraphQL query requesting tenant-scoped data, the system should enforce tenant isolation 
+///
+/// For any GraphQL query requesting tenant-scoped data, the system should enforce tenant isolation
 /// and only return data belonging to the authenticated tenant
 #[test]
 fn test_graphql_query_tenant_isolation() {
@@ -18,14 +18,14 @@ fn test_graphql_query_tenant_isolation() {
     )| {
         // Ensure different tenant IDs
         prop_assume!(tenant_id_1 != tenant_id_2);
-        
+
         // This is a property test for GraphQL query tenant isolation
         // In a real implementation, this would:
         // 1. Set up test database with data for both tenants
         // 2. Create GraphQL context with tenant_1 authentication
         // 3. Execute queries that should only return tenant_1 data
         // 4. Verify no tenant_2 data is returned
-        
+
         // For now, we'll test the core isolation logic
         let auth_context = AuthContext {
             tenant_id: tenant_id_1.clone(),
@@ -34,12 +34,12 @@ fn test_graphql_query_tenant_isolation() {
             rate_limit_per_sec: 100,
             auth_type: AuthType::ApiKey { key_id: "test_key".to_string() },
         };
-        
+
         // Test that tenant isolation is enforced in queries
         // This validates that queries are properly scoped to the authenticated tenant
         assert_eq!(auth_context.tenant_id, tenant_id_1);
         assert_ne!(auth_context.tenant_id, tenant_id_2);
-        
+
         // In a full implementation, this would test actual GraphQL queries
         // against a test database to ensure tenant isolation
     });
@@ -47,8 +47,8 @@ fn test_graphql_query_tenant_isolation() {
 
 /// **Feature: realtime-saas-platform, Property 34: GraphQL mutation authentication**
 /// **Validates: Requirements 1.1, 1.4**
-/// 
-/// For any GraphQL mutation operation, the system should validate authentication credentials 
+///
+/// For any GraphQL mutation operation, the system should validate authentication credentials
 /// and enforce scope-based permissions before executing the mutation
 #[test]
 fn test_graphql_mutation_authentication() {
@@ -68,7 +68,7 @@ fn test_graphql_mutation_authentication() {
         if has_admin_scope {
             scopes.push(Scope::AdminWrite);
         }
-        
+
         let auth_context = AuthContext {
             tenant_id: tenant_id.clone(),
             project_id: project_id.clone(),
@@ -76,15 +76,15 @@ fn test_graphql_mutation_authentication() {
             rate_limit_per_sec: 100,
             auth_type: AuthType::ApiKey { key_id: "test_key".to_string() },
         };
-        
+
         // Test scope-based authorization for mutations
         let can_publish = scopes.contains(&Scope::EventsPublish);
         let can_admin = scopes.contains(&Scope::AdminWrite);
-        
+
         // Verify that scope checking works correctly
         assert_eq!(auth_context.scopes.contains(&Scope::EventsPublish), can_publish);
         assert_eq!(auth_context.scopes.contains(&Scope::AdminWrite), can_admin);
-        
+
         // In a full implementation, this would test actual GraphQL mutations
         // with different authentication contexts to ensure proper authorization
     });
@@ -92,8 +92,8 @@ fn test_graphql_mutation_authentication() {
 
 /// **Feature: realtime-saas-platform, Property 35: GraphQL subscription real-time delivery**
 /// **Validates: Requirements 2.2**
-/// 
-/// For any GraphQL subscription to event topics, the system should deliver events in real-time 
+///
+/// For any GraphQL subscription to event topics, the system should deliver events in real-time
 /// to all active subscribers with proper tenant isolation
 #[test]
 fn test_graphql_subscription_delivery() {
@@ -110,18 +110,18 @@ fn test_graphql_subscription_delivery() {
             rate_limit_per_sec: 100,
             auth_type: AuthType::ApiKey { key_id: "test_key".to_string() },
         };
-        
+
         // Test subscription setup and tenant isolation
         assert!(auth_context.scopes.contains(&Scope::EventsSubscribe));
         assert_eq!(auth_context.tenant_id, tenant_id);
         assert_eq!(auth_context.project_id, project_id);
-        
+
         // Verify topics are properly scoped
         for topic in &topics {
             assert!(!topic.is_empty());
             assert!(topic.len() >= 3);
         }
-        
+
         // In a full implementation, this would:
         // 1. Create GraphQL subscription for the topics
         // 2. Publish events to those topics
@@ -141,9 +141,11 @@ mod tests {
             project_id: "test_project".to_string(),
             scopes: vec![Scope::EventsPublish, Scope::EventsSubscribe],
             rate_limit_per_sec: 100,
-            auth_type: AuthType::ApiKey { key_id: "test_key".to_string() },
+            auth_type: AuthType::ApiKey {
+                key_id: "test_key".to_string(),
+            },
         };
-        
+
         assert_eq!(auth_context.tenant_id, "test_tenant");
         assert_eq!(auth_context.project_id, "test_project");
         assert!(auth_context.scopes.contains(&Scope::EventsPublish));

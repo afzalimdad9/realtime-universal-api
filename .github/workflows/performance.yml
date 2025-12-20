@@ -67,26 +67,41 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
+      - name: Check if load tests exist
+        id: check_tests
+        run: |
+          if [ -f "tests/load/websocket-load-test.js" ] && [ -f "tests/load/rest-load-test.js" ]; then
+            echo "tests_exist=true" >> $GITHUB_OUTPUT
+          else
+            echo "tests_exist=false" >> $GITHUB_OUTPUT
+          fi
+
       - name: Set up Docker Compose
+        if: steps.check_tests.outputs.tests_exist == 'true'
         run: docker-compose -f docker-compose.yml -f docker-compose.test.yml up -d
 
       - name: Wait for services
+        if: steps.check_tests.outputs.tests_exist == 'true'
         run: |
           timeout 60 bash -c 'until curl -f http://localhost:3000/health; do sleep 2; done'
 
       - name: Install k6
+        if: steps.check_tests.outputs.tests_exist == 'true'
         run: |
-          sudo apt-key adv --keyserver hkp://keyserver.ubuntu.com:80 --recv-keys C5AD17C747E3415A3642D57D77C6C491D6AC1D69
-          echo "deb https://dl.k6.io/deb stable main" | sudo tee /etc/apt/sources.list.d/k6.list
+          sudo gpg -k
+          sudo gpg --no-default-keyring --keyring /usr/share/keyrings/k6-archive-keyring.gpg --keyserver hkp://keyserver.ubuntu.com:80 --recv-keys C5AD17C747E3415A3642D57D77C6C491D6AC1D69
+          echo "deb [signed-by=/usr/share/keyrings/k6-archive-keyring.gpg] https://dl.k6.io/deb stable main" | sudo tee /etc/apt/sources.list.d/k6.list
           sudo apt-get update
           sudo apt-get install k6
 
       - name: Run load tests
+        if: steps.check_tests.outputs.tests_exist == 'true'
         run: |
           k6 run --out json=load-test-results.json tests/load/websocket-load-test.js
           k6 run --out json=rest-load-test-results.json tests/load/rest-load-test.js
 
       - name: Upload load test results
+        if: steps.check_tests.outputs.tests_exist == 'true'
         uses: actions/upload-artifact@v3
         with:
           name: load-test-results

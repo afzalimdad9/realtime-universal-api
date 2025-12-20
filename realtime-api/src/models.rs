@@ -98,9 +98,16 @@ pub enum UsageMetric {
 /// Billing plan configuration
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub enum BillingPlan {
-    Free { monthly_events: i64 },
-    Pro { monthly_events: i64, price_per_event: f64 },
-    Enterprise { unlimited: bool },
+    Free {
+        monthly_events: i64,
+    },
+    Pro {
+        monthly_events: i64,
+        price_per_event: f64,
+    },
+    Enterprise {
+        unlimited: bool,
+    },
 }
 
 /// Project limits configuration
@@ -188,7 +195,7 @@ impl ApiKey {
 
     /// Check if API key is valid (active and not expired)
     pub fn is_valid(&self) -> bool {
-        self.is_active && self.expires_at.map_or(true, |exp| exp > Utc::now())
+        self.is_active && self.expires_at.is_none_or(|exp| exp > Utc::now())
     }
 }
 

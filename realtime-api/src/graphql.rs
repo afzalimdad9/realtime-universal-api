@@ -8,8 +8,7 @@ use chrono::{DateTime, Utc};
 use futures_util::Stream;
 use std::fmt;
 use std::pin::Pin;
-use tokio_stream::{wrappers::BroadcastStream, StreamExt as TokioStreamExt};
-use tracing::{error, info};
+use tracing::info;
 
 use crate::auth::{AuthContext, AuthError, AuthService};
 use crate::database::Database;
@@ -56,16 +55,14 @@ impl ErrorExtensions for GraphQLError {
             GraphQLError::NotFound => Error::new("Not found").extend_with(|_, e| {
                 e.set("code", "NOT_FOUND");
             }),
-            GraphQLError::ValidationError(msg) => {
-                Error::new(format!("Validation error: {}", msg)).extend_with(|_, e| {
+            GraphQLError::ValidationError(msg) => Error::new(format!("Validation error: {}", msg))
+                .extend_with(|_, e| {
                     e.set("code", "VALIDATION_ERROR");
-                })
-            }
-            GraphQLError::InternalError(msg) => {
-                Error::new(format!("Internal error: {}", msg)).extend_with(|_, e| {
+                }),
+            GraphQLError::InternalError(msg) => Error::new(format!("Internal error: {}", msg))
+                .extend_with(|_, e| {
                     e.set("code", "INTERNAL_ERROR");
-                })
-            }
+                }),
         }
     }
 }
@@ -222,8 +219,7 @@ impl From<UsageRecord> for GqlUsageRecord {
 }
 
 /// GraphQL enums
-#[derive(Enum, Copy, Clone, Eq, PartialEq)]
-#[derive(Debug)]
+#[derive(Enum, Copy, Clone, Eq, PartialEq, Debug)]
 pub enum GqlTenantStatus {
     Active,
     Trial,
@@ -438,7 +434,11 @@ impl QueryRoot {
         let database = ctx.data::<Database>()?;
 
         // Only return the authenticated tenant (tenant isolation)
-        if let Some(tenant) = database.get_tenant(&auth.tenant_id).await.map_err(GraphQLError::from)? {
+        if let Some(tenant) = database
+            .get_tenant(&auth.tenant_id)
+            .await
+            .map_err(GraphQLError::from)?
+        {
             Ok(vec![tenant.into()])
         } else {
             Ok(vec![])
@@ -446,7 +446,11 @@ impl QueryRoot {
     }
 
     /// Get projects for a tenant
-    async fn projects(&self, ctx: &Context<'_>, tenant_id: Option<ID>) -> FieldResult<Vec<GqlProject>> {
+    async fn projects(
+        &self,
+        ctx: &Context<'_>,
+        tenant_id: Option<ID>,
+    ) -> FieldResult<Vec<GqlProject>> {
         let auth = get_auth_context(ctx)?;
         let database = ctx.data::<Database>()?;
 
@@ -468,6 +472,7 @@ impl QueryRoot {
     }
 
     /// Get API keys for a project (admin read required)
+    #[allow(clippy::unnecessary_lazy_evaluations, clippy::unnecessary_to_owned)]
     async fn api_keys(&self, ctx: &Context<'_>, project_id: ID) -> FieldResult<Vec<GqlApiKey>> {
         let auth = get_auth_context(ctx)?;
         check_scope(&auth, &Scope::AdminRead)?;
@@ -494,6 +499,7 @@ impl QueryRoot {
     }
 
     /// Get usage records for a project (billing read required)
+    #[allow(clippy::unnecessary_lazy_evaluations, clippy::unnecessary_to_owned)]
     async fn usage_records(
         &self,
         ctx: &Context<'_>,
@@ -532,11 +538,7 @@ pub struct MutationRoot;
 #[Object]
 impl MutationRoot {
     /// Publish an event
-    async fn publish_event(
-        &self,
-        ctx: &Context<'_>,
-        input: EventInput,
-    ) -> FieldResult<GqlEvent> {
+    async fn publish_event(&self, ctx: &Context<'_>, input: EventInput) -> FieldResult<GqlEvent> {
         let auth = get_auth_context(ctx)?;
         check_scope(&auth, &Scope::EventsPublish)?;
 
@@ -567,6 +569,7 @@ impl MutationRoot {
     }
 
     /// Create a new API key (admin write required)
+    #[allow(clippy::unnecessary_lazy_evaluations, clippy::unnecessary_to_owned)]
     async fn create_api_key(
         &self,
         ctx: &Context<'_>,
@@ -628,11 +631,16 @@ impl MutationRoot {
             "enterprise" => BillingPlan::Enterprise {
                 unlimited: input.plan.unlimited.unwrap_or(true),
             },
-            _ => return Err(GraphQLError::ValidationError("Invalid plan type".to_string()).extend()),
+            _ => {
+                return Err(GraphQLError::ValidationError("Invalid plan type".to_string()).extend())
+            }
         };
 
         let tenant = Tenant::new(input.name, plan);
-        database.create_tenant(&tenant).await.map_err(GraphQLError::from)?;
+        database
+            .create_tenant(&tenant)
+            .await
+            .map_err(GraphQLError::from)?;
 
         Ok(tenant.into())
     }
@@ -659,17 +667,17 @@ impl MutationRoot {
             };
         }
 
-        database.create_project(&project).await.map_err(GraphQLError::from)?;
+        database
+            .create_project(&project)
+            .await
+            .map_err(GraphQLError::from)?;
 
         Ok(project.into())
     }
 
     /// Revoke an API key (admin write required)
-    async fn revoke_api_key(
-        &self,
-        ctx: &Context<'_>,
-        key_id: ID,
-    ) -> FieldResult<bool> {
+    #[allow(clippy::unnecessary_to_owned)]
+    async fn revoke_api_key(&self, ctx: &Context<'_>, key_id: ID) -> FieldResult<bool> {
         let auth = get_auth_context(ctx)?;
         check_scope(&auth, &Scope::AdminWrite)?;
 
@@ -701,7 +709,7 @@ impl SubscriptionRoot {
         let event_service = ctx.data::<EventService>()?;
 
         // Create subscription with tenant isolation
-        let subscription = event_service
+        let _subscription = event_service
             .subscribe_to_topics(&auth.tenant_id, &auth.project_id, topics)
             .await
             .map_err(GraphQLError::from)?;
@@ -738,8 +746,7 @@ impl SubscriptionRoot {
 
 /// Helper functions
 fn get_auth_context(ctx: &Context<'_>) -> FieldResult<AuthContext> {
-    ctx.data::<AuthContext>()
-        .map(|auth| auth.clone())
+    ctx.data::<AuthContext>().cloned()
         .map_err(|_| GraphQLError::Unauthorized.extend())
 }
 
@@ -783,7 +790,10 @@ pub async fn graphql_subscription_handler(
     ws.on_upgrade(move |_socket| async move {
         // For now, just log the connection
         // In a real implementation, this would handle GraphQL subscriptions over WebSocket
-        info!("GraphQL WebSocket connection established for tenant: {}", auth_context.tenant_id);
+        info!(
+            "GraphQL WebSocket connection established for tenant: {}",
+            auth_context.tenant_id
+        );
     })
 }
 
@@ -842,7 +852,7 @@ mod tests {
             price_per_event: 0.001,
         };
         let gql_plan: GqlBillingPlan = plan.into();
-        
+
         match gql_plan {
             GqlBillingPlan::Pro(pro_plan) => {
                 assert_eq!(pro_plan.monthly_events, 100000);

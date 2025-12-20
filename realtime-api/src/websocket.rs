@@ -26,9 +26,13 @@ pub struct WebSocketConnectionParams {
 #[serde(tag = "type")]
 pub enum WebSocketMessage {
     /// Subscribe to topics
-    Subscribe { topics: Vec<String> },
+    Subscribe {
+        topics: Vec<String>,
+    },
     /// Unsubscribe from topics
-    Unsubscribe { topics: Vec<String> },
+    Unsubscribe {
+        topics: Vec<String>,
+    },
     /// Event delivery
     Event {
         id: String,
@@ -37,9 +41,13 @@ pub enum WebSocketMessage {
         published_at: String,
     },
     /// Connection acknowledgment
-    Connected { connection_id: String },
+    Connected {
+        connection_id: String,
+    },
     /// Error message
-    Error { message: String },
+    Error {
+        message: String,
+    },
     /// Ping/Pong for keepalive
     Ping,
     Pong,
@@ -63,6 +71,12 @@ pub struct WebSocketManager {
     connection_limits: Arc<Mutex<HashMap<String, i32>>>, // tenant_id -> limit
 }
 
+impl Default for WebSocketManager {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl WebSocketManager {
     pub fn new() -> Self {
         Self {
@@ -74,23 +88,23 @@ impl WebSocketManager {
     /// Add a new connection
     pub fn add_connection(&self, connection: WebSocketConnection) -> Result<(), String> {
         let mut connections = self.connections.lock().unwrap();
-        
+
         // Check connection limits
         let tenant_connection_count = connections
             .values()
             .filter(|conn| conn.tenant_id == connection.tenant_id)
             .count();
-        
+
         let limits = self.connection_limits.lock().unwrap();
         let limit = limits.get(&connection.tenant_id).unwrap_or(&1000); // Default limit
-        
+
         if tenant_connection_count >= *limit as usize {
             return Err(format!(
                 "Connection limit exceeded for tenant {}: {}/{}",
                 connection.tenant_id, tenant_connection_count, limit
             ));
         }
-        
+
         connections.insert(connection.id.clone(), connection);
         Ok(())
     }
@@ -102,14 +116,20 @@ impl WebSocketManager {
     }
 
     /// Get connections for a tenant/project/topic
-    pub fn get_connections_for_event(&self, tenant_id: &str, project_id: &str, topic: &str) -> Vec<WebSocketConnection> {
+    pub fn get_connections_for_event(
+        &self,
+        tenant_id: &str,
+        project_id: &str,
+        topic: &str,
+    ) -> Vec<WebSocketConnection> {
         let connections = self.connections.lock().unwrap();
         connections
             .values()
             .filter(|conn| {
                 conn.tenant_id == tenant_id
                     && conn.project_id == project_id
-                    && (conn.subscribed_topics.is_empty() || conn.subscribed_topics.iter().any(|t| topic.starts_with(t)))
+                    && (conn.subscribed_topics.is_empty()
+                        || conn.subscribed_topics.iter().any(|t| topic.starts_with(t)))
             })
             .cloned()
             .collect()
@@ -138,7 +158,7 @@ impl WebSocketManager {
             .filter(|(_, conn)| conn.tenant_id == tenant_id)
             .map(|(id, _)| id.clone())
             .collect();
-        
+
         // Send termination message to all tenant connections
         for (_, conn) in connections.iter() {
             if conn.tenant_id == tenant_id {
@@ -147,10 +167,10 @@ impl WebSocketManager {
                 });
             }
         }
-        
+
         // Remove connections
         connections.retain(|_, conn| conn.tenant_id != tenant_id);
-        
+
         connection_ids
     }
 }
@@ -167,7 +187,7 @@ pub async fn handle_websocket_connection(
     state: AppState,
 ) {
     let connection_id = Uuid::new_v4().to_string();
-    
+
     info!(
         "New WebSocket connection {} for tenant/project: {}/{}",
         connection_id, params.tenant_id, params.project_id
@@ -175,7 +195,7 @@ pub async fn handle_websocket_connection(
 
     // Create broadcast channel for this connection
     let (sender, mut receiver) = broadcast::channel(1000);
-    
+
     // Create connection object
     let connection = WebSocketConnection {
         id: connection_id.clone(),
@@ -193,8 +213,13 @@ pub async fn handle_websocket_connection(
     }
 
     // Set connection limit based on project limits
-    if let Ok(Some(project)) = state.database.get_project_with_tenant(&params.tenant_id, &params.project_id).await {
-        WEBSOCKET_MANAGER.set_connection_limit(params.tenant_id.clone(), project.limits.max_connections);
+    if let Ok(Some(project)) = state
+        .database
+        .get_project_with_tenant(&params.tenant_id, &params.project_id)
+        .await
+    {
+        WEBSOCKET_MANAGER
+            .set_connection_limit(params.tenant_id.clone(), project.limits.max_connections);
     }
 
     // Split the socket into sender and receiver
@@ -204,7 +229,7 @@ pub async fn handle_websocket_connection(
     let connected_msg = WebSocketMessage::Connected {
         connection_id: connection_id.clone(),
     };
-    
+
     if let Ok(msg_json) = serde_json::to_string(&connected_msg) {
         if let Err(e) = ws_sender.send(Message::Text(msg_json)).await {
             error!("Failed to send connection acknowledgment: {}", e);
@@ -215,7 +240,14 @@ pub async fn handle_websocket_connection(
 
     // Subscribe to initial topics if provided
     if !params.topics.is_empty() {
-        if let Err(e) = subscribe_to_topics(&state, &params.tenant_id, &params.project_id, &params.topics).await {
+        if let Err(e) = subscribe_to_topics(
+            &state,
+            &params.tenant_id,
+            &params.project_id,
+            &params.topics,
+        )
+        .await
+        {
             warn!("Failed to subscribe to initial topics: {}", e);
         }
     }
@@ -226,9 +258,13 @@ pub async fn handle_websocket_connection(
         params.project_id.clone(),
         UsageMetric::WebSocketMinutes,
         1,
-        chrono::Utc::now().date_naive().and_hms_opt(0, 0, 0).unwrap().and_utc(),
+        chrono::Utc::now()
+            .date_naive()
+            .and_hms_opt(0, 0, 0)
+            .unwrap()
+            .and_utc(),
     );
-    
+
     if let Err(e) = state.database.create_usage_record(&usage_record).await {
         warn!("Failed to track WebSocket usage: {}", e);
     }
@@ -244,14 +280,17 @@ pub async fn handle_websocket_connection(
                 }
             }
         }
-        debug!("Outgoing message task ended for connection {}", connection_id_clone);
+        debug!(
+            "Outgoing message task ended for connection {}",
+            connection_id_clone
+        );
     });
 
     // Handle incoming messages
     let connection_id_clone = connection_id.clone();
     let state_clone = state.clone();
     let params_clone = params.clone();
-    
+
     while let Some(msg) = ws_receiver.next().await {
         match msg {
             Ok(Message::Text(text)) => {
@@ -260,23 +299,28 @@ pub async fn handle_websocket_connection(
                     &connection_id_clone,
                     &params_clone,
                     &state_clone,
-                ).await {
+                )
+                .await
+                {
                     error!("Error handling WebSocket message: {}", e);
-                    
+
                     let error_msg = WebSocketMessage::Error {
                         message: format!("Message handling error: {}", e),
                     };
-                    
-                    if let Ok(error_json) = serde_json::to_string(&error_msg) {
+
+                    if let Ok(_error_json) = serde_json::to_string(&error_msg) {
                         let _ = sender.send(error_msg);
                     }
                 }
             }
             Ok(Message::Close(_)) => {
-                info!("WebSocket connection {} closed by client", connection_id_clone);
+                info!(
+                    "WebSocket connection {} closed by client",
+                    connection_id_clone
+                );
                 break;
             }
-            Ok(Message::Ping(data)) => {
+            Ok(Message::Ping(_data)) => {
                 // Respond to ping with pong
                 let pong_msg = WebSocketMessage::Pong;
                 let _ = sender.send(pong_msg);
@@ -287,10 +331,16 @@ pub async fn handle_websocket_connection(
             }
             Ok(_) => {
                 // Handle other message types (binary, etc.)
-                debug!("Received non-text message from connection {}", connection_id_clone);
+                debug!(
+                    "Received non-text message from connection {}",
+                    connection_id_clone
+                );
             }
             Err(e) => {
-                error!("WebSocket error for connection {}: {}", connection_id_clone, e);
+                error!(
+                    "WebSocket error for connection {}: {}",
+                    connection_id_clone, e
+                );
                 break;
             }
         }
@@ -310,12 +360,15 @@ async fn handle_websocket_message(
     state: &AppState,
 ) -> Result<()> {
     let ws_message: WebSocketMessage = serde_json::from_str(message)?;
-    
+
     match ws_message {
         WebSocketMessage::Subscribe { topics } => {
-            info!("Connection {} subscribing to topics: {:?}", connection_id, topics);
+            info!(
+                "Connection {} subscribing to topics: {:?}",
+                connection_id, topics
+            );
             subscribe_to_topics(state, &params.tenant_id, &params.project_id, &topics).await?;
-            
+
             // Update connection's subscribed topics
             let mut connections = WEBSOCKET_MANAGER.connections.lock().unwrap();
             if let Some(conn) = connections.get_mut(connection_id) {
@@ -325,8 +378,11 @@ async fn handle_websocket_message(
             }
         }
         WebSocketMessage::Unsubscribe { topics } => {
-            info!("Connection {} unsubscribing from topics: {:?}", connection_id, topics);
-            
+            info!(
+                "Connection {} unsubscribing from topics: {:?}",
+                connection_id, topics
+            );
+
             // Update connection's subscribed topics
             let mut connections = WEBSOCKET_MANAGER.connections.lock().unwrap();
             if let Some(conn) = connections.get_mut(connection_id) {
@@ -341,10 +397,13 @@ async fn handle_websocket_message(
             }
         }
         _ => {
-            warn!("Received unexpected message type from connection {}", connection_id);
+            warn!(
+                "Received unexpected message type from connection {}",
+                connection_id
+            );
         }
     }
-    
+
     Ok(())
 }
 
@@ -356,16 +415,19 @@ async fn subscribe_to_topics(
     topics: &[String],
 ) -> Result<()> {
     let consumer_name = format!("websocket_{}_{}", tenant_id, project_id);
-    
+
     // Create subscription in event service
-    let _subscription = state.event_service.create_subscription(
-        tenant_id,
-        project_id,
-        topics.to_vec(),
-        consumer_name,
-        false, // Non-durable for WebSocket connections
-    ).await?;
-    
+    let _subscription = state
+        .event_service
+        .create_subscription(
+            tenant_id,
+            project_id,
+            topics.to_vec(),
+            consumer_name,
+            false, // Non-durable for WebSocket connections
+        )
+        .await?;
+
     debug!("Created subscription for topics: {:?}", topics);
     Ok(())
 }
@@ -377,40 +439,46 @@ pub async fn broadcast_event_to_websockets(event: &Event) -> Result<()> {
         &event.project_id,
         &event.topic,
     );
-    
+
     if connections.is_empty() {
         debug!("No WebSocket connections found for event {}", event.id);
         return Ok(());
     }
-    
+
     let ws_message = WebSocketMessage::Event {
         id: event.id.clone(),
         topic: event.topic.clone(),
         payload: event.payload.clone(),
         published_at: event.published_at.to_rfc3339(),
     };
-    
+
     let mut delivered_count = 0;
-    
+
     for connection in connections {
         if let Err(e) = connection.sender.send(ws_message.clone()) {
-            warn!("Failed to send event to WebSocket connection {}: {}", connection.id, e);
+            warn!(
+                "Failed to send event to WebSocket connection {}: {}",
+                connection.id, e
+            );
         } else {
             delivered_count += 1;
         }
     }
-    
+
     info!(
         "Broadcasted event {} to {} WebSocket connections",
         event.id, delivered_count
     );
-    
+
     Ok(())
 }
 
 /// Terminate all WebSocket connections for a suspended tenant
 pub async fn terminate_tenant_websocket_connections(tenant_id: &str) -> Vec<String> {
-    info!("Terminating all WebSocket connections for suspended tenant: {}", tenant_id);
+    info!(
+        "Terminating all WebSocket connections for suspended tenant: {}",
+        tenant_id
+    );
     WEBSOCKET_MANAGER.terminate_tenant_connections(tenant_id)
 }
 
@@ -418,17 +486,25 @@ pub async fn terminate_tenant_websocket_connections(tenant_id: &str) -> Vec<Stri
 pub fn get_websocket_stats() -> HashMap<String, serde_json::Value> {
     let connections = WEBSOCKET_MANAGER.connections.lock().unwrap();
     let mut stats = HashMap::new();
-    
-    stats.insert("total_connections".to_string(), serde_json::Value::Number(connections.len().into()));
-    
+
+    stats.insert(
+        "total_connections".to_string(),
+        serde_json::Value::Number(connections.len().into()),
+    );
+
     // Count connections per tenant
     let mut tenant_counts: HashMap<String, usize> = HashMap::new();
     for connection in connections.values() {
-        *tenant_counts.entry(connection.tenant_id.clone()).or_insert(0) += 1;
+        *tenant_counts
+            .entry(connection.tenant_id.clone())
+            .or_insert(0) += 1;
     }
-    
-    stats.insert("connections_per_tenant".to_string(), serde_json::to_value(tenant_counts).unwrap());
-    
+
+    stats.insert(
+        "connections_per_tenant".to_string(),
+        serde_json::to_value(tenant_counts).unwrap(),
+    );
+
     stats
 }
 
@@ -447,11 +523,11 @@ mod tests {
         let message = WebSocketMessage::Connected {
             connection_id: "test_123".to_string(),
         };
-        
+
         let json = serde_json::to_string(&message).unwrap();
         assert!(json.contains("Connected"));
         assert!(json.contains("test_123"));
-        
+
         let deserialized: WebSocketMessage = serde_json::from_str(&json).unwrap();
         match deserialized {
             WebSocketMessage::Connected { connection_id } => {
@@ -465,9 +541,9 @@ mod tests {
     fn test_connection_limits() {
         let manager = WebSocketManager::new();
         manager.set_connection_limit("tenant_1".to_string(), 2);
-        
+
         let (sender, _) = broadcast::channel(100);
-        
+
         // Add first connection
         let conn1 = WebSocketConnection {
             id: "conn_1".to_string(),
@@ -477,10 +553,10 @@ mod tests {
             sender: sender.clone(),
             created_at: chrono::Utc::now(),
         };
-        
+
         assert!(manager.add_connection(conn1).is_ok());
         assert_eq!(manager.get_tenant_connection_count("tenant_1"), 1);
-        
+
         // Add second connection
         let conn2 = WebSocketConnection {
             id: "conn_2".to_string(),
@@ -490,10 +566,10 @@ mod tests {
             sender: sender.clone(),
             created_at: chrono::Utc::now(),
         };
-        
+
         assert!(manager.add_connection(conn2).is_ok());
         assert_eq!(manager.get_tenant_connection_count("tenant_1"), 2);
-        
+
         // Try to add third connection (should fail)
         let conn3 = WebSocketConnection {
             id: "conn_3".to_string(),
@@ -503,7 +579,7 @@ mod tests {
             sender: sender.clone(),
             created_at: chrono::Utc::now(),
         };
-        
+
         assert!(manager.add_connection(conn3).is_err());
         assert_eq!(manager.get_tenant_connection_count("tenant_1"), 2);
     }

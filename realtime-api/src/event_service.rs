@@ -50,20 +50,35 @@ impl EventService {
     /// Publish an event with validation and persistence
     pub async fn publish_event(&self, event: &Event) -> Result<PublishResult> {
         // Validate tenant and project exist and are active
-        let tenant = self.database.get_tenant(&event.tenant_id).await?
+        let tenant = self
+            .database
+            .get_tenant(&event.tenant_id)
+            .await?
             .ok_or_else(|| anyhow!("Tenant not found: {}", event.tenant_id))?;
 
         if !tenant.is_active() {
-            return Ok(PublishResult::ValidationFailed(format!("Tenant is not active: {}", event.tenant_id)));
+            return Ok(PublishResult::ValidationFailed(format!(
+                "Tenant is not active: {}",
+                event.tenant_id
+            )));
         }
 
-        let _project = self.database.get_project_with_tenant(&event.tenant_id, &event.project_id).await?
+        let _project = self
+            .database
+            .get_project_with_tenant(&event.tenant_id, &event.project_id)
+            .await?
             .ok_or_else(|| anyhow!("Project not found: {}", event.project_id))?;
 
         // Validate event payload against topic schema
-        if let Err(e) = self.schema_validator.validate_event_payload(&event.topic, &event.payload) {
+        if let Err(e) = self
+            .schema_validator
+            .validate_event_payload(&event.topic, &event.payload)
+        {
             warn!("Event validation failed for topic {}: {}", event.topic, e);
-            return Ok(PublishResult::ValidationFailed(format!("Event validation failed: {}", e)));
+            return Ok(PublishResult::ValidationFailed(format!(
+                "Event validation failed: {}",
+                e
+            )));
         }
 
         // Publish to NATS JetStream first (for durability)
@@ -88,7 +103,11 @@ impl EventService {
             event.project_id.clone(),
             UsageMetric::EventsPublished,
             1,
-            chrono::Utc::now().date_naive().and_hms_opt(0, 0, 0).unwrap().and_utc(),
+            chrono::Utc::now()
+                .date_naive()
+                .and_hms_opt(0, 0, 0)
+                .unwrap()
+                .and_utc(),
         );
 
         if let Err(e) = self.database.create_usage_record(&usage_record).await {
@@ -118,7 +137,7 @@ impl EventService {
             topic.to_string(),
             payload,
         );
-        
+
         self.publish_event(&event).await
     }
 
@@ -130,14 +149,20 @@ impl EventService {
         topics: Vec<String>,
     ) -> Result<EventSubscription> {
         // Validate tenant and project
-        let tenant = self.database.get_tenant(tenant_id).await?
+        let tenant = self
+            .database
+            .get_tenant(tenant_id)
+            .await?
             .ok_or_else(|| anyhow!("Tenant not found: {}", tenant_id))?;
 
         if !tenant.is_active() {
             return Err(anyhow!("Tenant is not active: {}", tenant_id));
         }
 
-        let _project = self.database.get_project_with_tenant(tenant_id, project_id).await?
+        let _project = self
+            .database
+            .get_project_with_tenant(tenant_id, project_id)
+            .await?
             .ok_or_else(|| anyhow!("Project not found: {}", project_id))?;
 
         // Create a broadcast channel for real-time events
@@ -171,14 +196,20 @@ impl EventService {
         durable: bool,
     ) -> Result<EventSubscription> {
         // Validate tenant and project
-        let tenant = self.database.get_tenant(tenant_id).await?
+        let tenant = self
+            .database
+            .get_tenant(tenant_id)
+            .await?
             .ok_or_else(|| anyhow!("Tenant not found: {}", tenant_id))?;
 
         if !tenant.is_active() {
             return Err(anyhow!("Tenant is not active: {}", tenant_id));
         }
 
-        let _project = self.database.get_project_with_tenant(tenant_id, project_id).await?
+        let _project = self
+            .database
+            .get_project_with_tenant(tenant_id, project_id)
+            .await?
             .ok_or_else(|| anyhow!("Project not found: {}", project_id))?;
 
         // Create subscription configuration
@@ -220,14 +251,20 @@ impl EventService {
         limit: Option<usize>,
     ) -> Result<Vec<(Event, crate::nats::EventCursor)>> {
         // Validate tenant and project
-        let tenant = self.database.get_tenant(tenant_id).await?
+        let tenant = self
+            .database
+            .get_tenant(tenant_id)
+            .await?
             .ok_or_else(|| anyhow!("Tenant not found: {}", tenant_id))?;
 
         if !tenant.is_active() {
             return Err(anyhow!("Tenant is not active: {}", tenant_id));
         }
 
-        let _project = self.database.get_project_with_tenant(tenant_id, project_id).await?
+        let _project = self
+            .database
+            .get_project_with_tenant(tenant_id, project_id)
+            .await?
             .ok_or_else(|| anyhow!("Project not found: {}", project_id))?;
 
         // Create replay request
@@ -244,7 +281,9 @@ impl EventService {
 
         info!(
             "Replayed {} events for tenant/project: {}/{}",
-            events.len(), tenant_id, project_id
+            events.len(),
+            tenant_id,
+            project_id
         );
 
         Ok(events)
@@ -258,7 +297,9 @@ impl EventService {
     }
 
     /// Get stream statistics
-    pub async fn get_stream_stats(&self) -> Result<std::collections::HashMap<String, serde_json::Value>> {
+    pub async fn get_stream_stats(
+        &self,
+    ) -> Result<std::collections::HashMap<String, serde_json::Value>> {
         self.nats_client.get_stream_info().await
     }
 
@@ -281,21 +322,20 @@ impl EventService {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::models::{BillingPlan, Project, Tenant};
 
     #[test]
     fn test_publish_result() {
         let result = PublishResult::Success;
-        
+
         match result {
-            PublishResult::Success => assert!(true),
-            PublishResult::ValidationFailed(_) => assert!(false),
+            PublishResult::Success => { /* Success case handled */ },
+            PublishResult::ValidationFailed(_) => panic!("Validation should not fail in tests"),
         }
     }
 
     #[test]
     fn test_event_subscription() {
-        let (tx, rx) = broadcast::channel(100);
+        let (_tx, rx) = broadcast::channel(100);
         let subscription = EventSubscription {
             consumer_name: "websocket_consumer".to_string(),
             tenant_id: "tenant_123".to_string(),

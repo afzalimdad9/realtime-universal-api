@@ -29,56 +29,61 @@ use schema_validator::SchemaValidator;
 async fn main() -> Result<()> {
     // Load configuration
     let config = Config::from_env()?;
-    
+
     // Initialize tracing and observability
     init_tracing(&config).await?;
-    
+
     info!("Starting Realtime SaaS Platform API");
     info!("Configuration loaded successfully");
-    
+
     // Initialize database connection
     info!("Connecting to database...");
     let database = Database::new(&config.database.url).await?;
-    
+
     // Run database migrations
     database.migrate().await?;
     info!("Database connection established and migrations completed");
-    
+
     // Initialize NATS connection
     info!("Connecting to NATS...");
     let nats_client = NatsClient::new(&config.nats.url, config.nats.stream_name.clone()).await?;
     info!("NATS connection established");
-    
+
     // Initialize schema validator
     let schema_validator = SchemaValidator::new();
-    
+
     // Initialize event service
     let event_service = EventService::new(database.clone(), nats_client, schema_validator);
-    
+
     // Initialize auth service
     let auth_service = AuthService::new(database.clone(), config.jwt_secret.clone());
-    
+
     // Create application state
     let app_state = AppState {
         database,
         event_service,
         auth_service,
     };
-    
+
     // Create the router
     let app = create_router(app_state);
-    
+
     // Start HTTP server
-    let listener = tokio::net::TcpListener::bind(&format!("{}:{}", config.server.host, config.server.port)).await?;
-    info!("Server listening on {}:{}", config.server.host, config.server.port);
-    
+    let listener =
+        tokio::net::TcpListener::bind(&format!("{}:{}", config.server.host, config.server.port))
+            .await?;
+    info!(
+        "Server listening on {}:{}",
+        config.server.host, config.server.port
+    );
+
     info!("Realtime API server started successfully");
-    
+
     // Start the server
     axum::serve(listener, app)
         .with_graceful_shutdown(shutdown_signal())
         .await?;
-    
+
     info!("Server shut down gracefully");
     Ok(())
 }

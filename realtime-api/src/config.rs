@@ -39,7 +39,7 @@ pub struct ObservabilityConfig {
 impl Config {
     pub fn from_env() -> Result<Self> {
         dotenvy::dotenv().ok(); // Load .env file if it exists
-        
+
         let config = Config {
             server: ServerConfig {
                 host: env::var("SERVER_HOST").unwrap_or_else(|_| "0.0.0.0".to_string()),
@@ -48,29 +48,27 @@ impl Config {
                     .parse()?,
             },
             database: DatabaseConfig {
-                url: env::var("DATABASE_URL")
-                    .unwrap_or_else(|_| "postgresql://postgres:password@localhost:5432/realtime_platform".to_string()),
+                url: env::var("DATABASE_URL").unwrap_or_else(|_| {
+                    "postgresql://postgres:password@localhost:5432/realtime_platform".to_string()
+                }),
                 max_connections: env::var("DATABASE_MAX_CONNECTIONS")
                     .unwrap_or_else(|_| "10".to_string())
                     .parse()?,
             },
             nats: NatsConfig {
-                url: env::var("NATS_URL")
-                    .unwrap_or_else(|_| "nats://localhost:4222".to_string()),
-                stream_name: env::var("NATS_STREAM_NAME")
-                    .unwrap_or_else(|_| "EVENTS".to_string()),
+                url: env::var("NATS_URL").unwrap_or_else(|_| "nats://localhost:4222".to_string()),
+                stream_name: env::var("NATS_STREAM_NAME").unwrap_or_else(|_| "EVENTS".to_string()),
             },
             observability: ObservabilityConfig {
                 tracing_endpoint: env::var("OTEL_EXPORTER_OTLP_ENDPOINT").ok(),
                 service_name: env::var("OTEL_SERVICE_NAME")
                     .unwrap_or_else(|_| "realtime-api".to_string()),
-                log_level: env::var("RUST_LOG")
-                    .unwrap_or_else(|_| "info".to_string()),
+                log_level: env::var("RUST_LOG").unwrap_or_else(|_| "info".to_string()),
             },
             jwt_secret: env::var("JWT_SECRET")
                 .unwrap_or_else(|_| "default_jwt_secret_change_in_production".to_string()),
         };
-        
+
         Ok(config)
     }
 }

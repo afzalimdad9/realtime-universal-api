@@ -63,7 +63,10 @@ impl NatsClient {
         // Initialize the stream
         nats_client.initialize_stream().await?;
 
-        info!("NATS JetStream client initialized with stream: {}", stream_name);
+        info!(
+            "NATS JetStream client initialized with stream: {}",
+            stream_name
+        );
         Ok(nats_client)
     }
 
@@ -75,14 +78,17 @@ impl NatsClient {
             retention: RetentionPolicy::Limits,
             storage: StorageType::File,
             max_age: Duration::from_secs(30 * 24 * 60 * 60), // 30 days
-            max_bytes: 1024 * 1024 * 1024 * 10, // 10GB
+            max_bytes: 1024 * 1024 * 1024 * 10,              // 10GB
             max_messages: 1_000_000,
             ..Default::default()
         };
 
         match self.jetstream.get_or_create_stream(stream_config).await {
             Ok(_) => {
-                info!("JetStream stream '{}' initialized successfully", self.stream_name);
+                info!(
+                    "JetStream stream '{}' initialized successfully",
+                    self.stream_name
+                );
                 Ok(())
             }
             Err(e) => {
@@ -94,11 +100,14 @@ impl NatsClient {
 
     /// Publish an event to JetStream with tenant/project scoping
     pub async fn publish_event(&self, event: &Event) -> Result<u64> {
-        let subject = format!("events.{}.{}.{}", event.tenant_id, event.project_id, event.topic);
-        
+        let subject = format!(
+            "events.{}.{}.{}",
+            event.tenant_id, event.project_id, event.topic
+        );
+
         // Serialize the event
         let payload = serde_json::to_vec(event)?;
-        
+
         // Add metadata headers
         let mut headers = async_nats::HeaderMap::new();
         headers.insert("tenant_id", event.tenant_id.as_str());
@@ -115,12 +124,12 @@ impl NatsClient {
 
         let ack_result = ack.await?;
         let sequence = ack_result.sequence;
-        
+
         info!(
             "Published event {} to JetStream with sequence: {}",
             event.id, sequence
         );
-        
+
         Ok(sequence)
     }
 
@@ -128,18 +137,31 @@ impl NatsClient {
     pub async fn create_consumer(&self, config: &SubscriptionConfig) -> Result<()> {
         let filter_subjects: Vec<String> = if config.topics.is_empty() {
             // Subscribe to all topics for this tenant/project
-            vec![format!("events.{}.{}.>", config.tenant_id, config.project_id)]
+            vec![format!(
+                "events.{}.{}.>",
+                config.tenant_id, config.project_id
+            )]
         } else {
             // Subscribe to specific topics
-            config.topics
+            config
+                .topics
                 .iter()
-                .map(|topic| format!("events.{}.{}.{}", config.tenant_id, config.project_id, topic))
+                .map(|topic| {
+                    format!(
+                        "events.{}.{}.{}",
+                        config.tenant_id, config.project_id, topic
+                    )
+                })
                 .collect()
         };
 
         let consumer_config = ConsumerConfig {
             name: Some(config.consumer_name.clone()),
-            durable_name: if config.durable { Some(config.consumer_name.clone()) } else { None },
+            durable_name: if config.durable {
+                Some(config.consumer_name.clone())
+            } else {
+                None
+            },
             deliver_policy: DeliverPolicy::New,
             filter_subjects,
             ..Default::default()
@@ -147,11 +169,13 @@ impl NatsClient {
 
         // Get the stream first, then create consumer
         let stream = self.jetstream.get_stream(&self.stream_name).await?;
-        
+
         match stream.create_consumer(consumer_config).await {
             Ok(_) => {
-                info!("Created consumer '{}' for tenant/project: {}/{}", 
-                      config.consumer_name, config.tenant_id, config.project_id);
+                info!(
+                    "Created consumer '{}' for tenant/project: {}/{}",
+                    config.consumer_name, config.tenant_id, config.project_id
+                );
                 Ok(())
             }
             Err(e) => {
@@ -162,16 +186,26 @@ impl NatsClient {
     }
 
     /// Get events for replay with cursor support
-    pub async fn replay_events(&self, request: &ReplayRequest) -> Result<Vec<(Event, EventCursor)>> {
+    pub async fn replay_events(
+        &self,
+        request: &ReplayRequest,
+    ) -> Result<Vec<(Event, EventCursor)>> {
         let subject_filter = if let Some(topic) = &request.topic {
-            format!("events.{}.{}.{}", request.tenant_id, request.project_id, topic)
+            format!(
+                "events.{}.{}.{}",
+                request.tenant_id, request.project_id, topic
+            )
         } else {
             format!("events.{}.{}.>", request.tenant_id, request.project_id)
         };
 
         // Create a temporary consumer for replay
-        let consumer_name = format!("replay_{}_{}", request.tenant_id, chrono::Utc::now().timestamp());
-        
+        let consumer_name = format!(
+            "replay_{}_{}",
+            request.tenant_id,
+            chrono::Utc::now().timestamp()
+        );
+
         let deliver_policy = if let Some(cursor) = &request.cursor {
             DeliverPolicy::ByStartSequence {
                 start_sequence: cursor.sequence,
@@ -192,10 +226,10 @@ impl NatsClient {
 
         let mut events = Vec::new();
         let limit = request.limit.unwrap_or(100);
-        
+
         // Fetch messages
         let mut messages = consumer.messages().await?;
-        
+
         for _ in 0..limit {
             if let Some(message) = messages.next().await {
                 match message {
@@ -208,7 +242,7 @@ impl NatsClient {
                                     timestamp: event.published_at,
                                 };
                                 events.push((event, cursor));
-                                
+
                                 // Acknowledge the message
                                 if let Err(e) = msg.ack().await {
                                     warn!("Failed to ack message: {}", e);
@@ -238,9 +272,13 @@ impl NatsClient {
             warn!("Failed to delete temporary consumer: {}", e);
         }
 
-        info!("Replayed {} events for tenant/project: {}/{}", 
-              events.len(), request.tenant_id, request.project_id);
-        
+        info!(
+            "Replayed {} events for tenant/project: {}/{}",
+            events.len(),
+            request.tenant_id,
+            request.project_id
+        );
+
         Ok(events)
     }
 
@@ -248,14 +286,29 @@ impl NatsClient {
     pub async fn get_stream_info(&self) -> Result<HashMap<String, serde_json::Value>> {
         let mut stream = self.jetstream.get_stream(&self.stream_name).await?;
         let info = stream.info().await?;
-        
+
         let mut stats = HashMap::new();
-        stats.insert("name".to_string(), serde_json::Value::String(info.config.name.clone()));
-        stats.insert("messages".to_string(), serde_json::Value::Number(info.state.messages.into()));
-        stats.insert("bytes".to_string(), serde_json::Value::Number(info.state.bytes.into()));
-        stats.insert("first_seq".to_string(), serde_json::Value::Number(info.state.first_sequence.into()));
-        stats.insert("last_seq".to_string(), serde_json::Value::Number(info.state.last_sequence.into()));
-        
+        stats.insert(
+            "name".to_string(),
+            serde_json::Value::String(info.config.name.clone()),
+        );
+        stats.insert(
+            "messages".to_string(),
+            serde_json::Value::Number(info.state.messages.into()),
+        );
+        stats.insert(
+            "bytes".to_string(),
+            serde_json::Value::Number(info.state.bytes.into()),
+        );
+        stats.insert(
+            "first_seq".to_string(),
+            serde_json::Value::Number(info.state.first_sequence.into()),
+        );
+        stats.insert(
+            "last_seq".to_string(),
+            serde_json::Value::Number(info.state.last_sequence.into()),
+        );
+
         Ok(stats)
     }
 
@@ -286,7 +339,6 @@ impl NatsClient {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::models::{Event};
     use chrono::Utc;
 
     #[tokio::test]

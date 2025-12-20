@@ -44,7 +44,7 @@ impl Database {
         // Simple validation that tenant_id is included in WHERE clause
         // In production, this would be more sophisticated
         query.contains(&format!("tenant_id = '{}'", tenant_id))
-            || query.contains(&format!("tenant_id = $"))
+            || query.contains("tenant_id = $")
     }
 
     // Tenant CRUD operations
@@ -55,12 +55,12 @@ impl Database {
             TenantStatus::PastDue => "past_due",
             TenantStatus::Suspended => "suspended",
         };
-        
+
         sqlx::query(
             r#"
             INSERT INTO tenants (id, name, plan, status, stripe_customer_id, created_at, updated_at)
             VALUES ($1, $2, $3, $4, $5, $6, $7)
-            "#
+            "#,
         )
         .bind(&tenant.id)
         .bind(&tenant.name)
@@ -94,7 +94,7 @@ impl Database {
                 "suspended" => TenantStatus::Suspended,
                 _ => TenantStatus::Trial,
             };
-            
+
             Ok(Some(Tenant {
                 id: row.get("id"),
                 name: row.get("name"),
@@ -116,15 +116,14 @@ impl Database {
             TenantStatus::PastDue => "past_due",
             TenantStatus::Suspended => "suspended",
         };
-        
-        let result = sqlx::query(
-            "UPDATE tenants SET status = $1, updated_at = NOW() WHERE id = $2"
-        )
-        .bind(status_str)
-        .bind(tenant_id)
-        .execute(&self.pool)
-        .await?;
-        
+
+        let result =
+            sqlx::query("UPDATE tenants SET status = $1, updated_at = NOW() WHERE id = $2")
+                .bind(status_str)
+                .bind(tenant_id)
+                .execute(&self.pool)
+                .await?;
+
         let rows_affected = result.rows_affected();
 
         if rows_affected == 0 {
@@ -142,7 +141,7 @@ impl Database {
             r#"
             INSERT INTO projects (id, tenant_id, name, limits, created_at, updated_at)
             VALUES ($1, $2, $3, $4, $5, $6)
-            "#
+            "#,
         )
         .bind(&project.id)
         .bind(&project.tenant_id)
@@ -153,7 +152,10 @@ impl Database {
         .execute(&self.pool)
         .await?;
 
-        info!("Created project: {} for tenant: {}", project.id, project.tenant_id);
+        info!(
+            "Created project: {} for tenant: {}",
+            project.id, project.tenant_id
+        );
         Ok(())
     }
 
@@ -180,7 +182,11 @@ impl Database {
         }
     }
 
-    pub async fn get_project_with_tenant(&self, tenant_id: &str, project_id: &str) -> Result<Option<Project>> {
+    pub async fn get_project_with_tenant(
+        &self,
+        tenant_id: &str,
+        project_id: &str,
+    ) -> Result<Option<Project>> {
         let row = sqlx::query(
             "SELECT id, tenant_id, name, limits, created_at, updated_at FROM projects WHERE id = $1 AND tenant_id = $2"
         )
@@ -253,7 +259,10 @@ impl Database {
         .execute(&self.pool)
         .await?;
 
-        info!("Created API key: {} for tenant: {}", api_key.id, api_key.tenant_id);
+        info!(
+            "Created API key: {} for tenant: {}",
+            api_key.id, api_key.tenant_id
+        );
         Ok(())
     }
 
@@ -296,11 +305,14 @@ impl Database {
         .bind(tenant_id)
         .execute(&self.pool)
         .await?;
-        
+
         let rows_affected = result.rows_affected();
 
         if rows_affected == 0 {
-            warn!("No API key found with id: {} for tenant: {}", key_id, tenant_id);
+            warn!(
+                "No API key found with id: {} for tenant: {}",
+                key_id, tenant_id
+            );
         } else {
             info!("Revoked API key: {} for tenant: {}", key_id, tenant_id);
         }
@@ -314,7 +326,7 @@ impl Database {
             r#"
             INSERT INTO events (id, tenant_id, project_id, topic, payload, published_at)
             VALUES ($1, $2, $3, $4, $5, $6)
-            "#
+            "#,
         )
         .bind(&event.id)
         .bind(&event.tenant_id)
@@ -394,7 +406,7 @@ impl Database {
         let mut query = String::from(
             "SELECT id, tenant_id, project_id, metric, quantity, window_start, created_at FROM usage_records WHERE project_id = $1"
         );
-        
+
         let mut bind_count = 2;
         if from_date.is_some() {
             query.push_str(&format!(" AND window_start >= ${}", bind_count));
@@ -406,7 +418,7 @@ impl Database {
         query.push_str(" ORDER BY window_start DESC");
 
         let mut query_builder = sqlx::query(&query).bind(project_id);
-        
+
         if let Some(from) = from_date {
             query_builder = query_builder.bind(from);
         }
@@ -426,7 +438,7 @@ impl Database {
                 "api_requests" => UsageMetric::ApiRequests,
                 _ => UsageMetric::ApiRequests,
             };
-            
+
             usage_records.push(UsageRecord {
                 id: row.get("id"),
                 tenant_id: row.get("tenant_id"),
@@ -449,7 +461,7 @@ impl Database {
             UsageMetric::WebSocketMinutes => "web_socket_minutes",
             UsageMetric::ApiRequests => "api_requests",
         };
-        
+
         sqlx::query(
             r#"
             INSERT INTO usage_records (id, tenant_id, project_id, metric, quantity, window_start, created_at)
@@ -476,7 +488,7 @@ impl Database {
             UsageMetric::WebSocketMinutes => "web_socket_minutes",
             UsageMetric::ApiRequests => "api_requests",
         };
-        
+
         let row = sqlx::query(
             "SELECT COALESCE(SUM(quantity), 0) as total FROM usage_records WHERE tenant_id = $1 AND metric = $2"
         )
@@ -497,18 +509,18 @@ mod tests {
     #[test]
     fn test_validate_tenant_isolation() {
         let tenant_id = "tenant_123";
-        
+
         // Valid queries with tenant isolation
         assert!(Database::validate_tenant_isolation(
             tenant_id,
             "SELECT * FROM events WHERE tenant_id = 'tenant_123'"
         ));
-        
+
         assert!(Database::validate_tenant_isolation(
             tenant_id,
             "SELECT * FROM events WHERE tenant_id = $1"
         ));
-        
+
         // Invalid query without tenant isolation
         assert!(!Database::validate_tenant_isolation(
             tenant_id,

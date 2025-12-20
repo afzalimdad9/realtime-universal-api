@@ -1,10 +1,10 @@
 /// **Feature: realtime-saas-platform, Property 1: Project setup validation**
-/// 
+///
 /// This property validates that the project setup is working correctly by ensuring
 /// that configuration can be loaded and basic infrastructure components are accessible.
-/// While the task mentions "Authenticated event acceptance", this test focuses on 
+/// While the task mentions "Authenticated event acceptance", this test focuses on
 /// validating the foundational project setup which is prerequisite for event handling.
-/// 
+///
 /// **Validates: Requirements 7.1, 7.2, 9.1** (observability and infrastructure setup)
 
 #[cfg(test)]
@@ -17,12 +17,12 @@ mod project_setup_properties {
     fn test_project_setup_basic() {
         // Test that we can create a basic configuration
         // This is a simplified version that should work even with build tool issues
-        
+
         // Set some basic environment variables
         env::set_var("SERVER_HOST", "localhost");
         env::set_var("SERVER_PORT", "3000");
         env::set_var("RUST_LOG", "info");
-        
+
         // Test that the configuration module exists and can be used
         // We'll use a simple approach that doesn't require heavy dependencies
         let host = env::var("SERVER_HOST").unwrap_or_else(|_| "0.0.0.0".to_string());
@@ -30,75 +30,80 @@ mod project_setup_properties {
             .unwrap_or_else(|_| "3000".to_string())
             .parse()
             .unwrap_or(3000);
-        
+
         // Basic validation that our setup works
         assert!(host == "localhost" || host == "0.0.0.0");
         assert_eq!(port, 3000);
-        
+
         // Clean up
         env::remove_var("SERVER_HOST");
         env::remove_var("SERVER_PORT");
         env::remove_var("RUST_LOG");
-        
+
         println!("✅ Project setup validation passed - basic configuration works");
     }
-    
+
     #[test]
     fn test_default_values() {
         // Clear environment variables to test defaults
         let vars_to_clear = [
-            "SERVER_HOST", "SERVER_PORT", "DATABASE_URL", "DATABASE_MAX_CONNECTIONS",
-            "NATS_URL", "NATS_STREAM_NAME", "OTEL_EXPORTER_OTLP_ENDPOINT", 
-            "OTEL_SERVICE_NAME", "RUST_LOG"
+            "SERVER_HOST",
+            "SERVER_PORT",
+            "DATABASE_URL",
+            "DATABASE_MAX_CONNECTIONS",
+            "NATS_URL",
+            "NATS_STREAM_NAME",
+            "OTEL_EXPORTER_OTLP_ENDPOINT",
+            "OTEL_SERVICE_NAME",
+            "RUST_LOG",
         ];
-        
+
         for var in &vars_to_clear {
             env::remove_var(var);
         }
-        
+
         // Test default values
         let host = env::var("SERVER_HOST").unwrap_or_else(|_| "0.0.0.0".to_string());
         let port: u16 = env::var("SERVER_PORT")
             .unwrap_or_else(|_| "3000".to_string())
             .parse()
             .unwrap_or(3000);
-        let service_name = env::var("OTEL_SERVICE_NAME")
-            .unwrap_or_else(|_| "realtime-api".to_string());
-        
+        let service_name =
+            env::var("OTEL_SERVICE_NAME").unwrap_or_else(|_| "realtime-api".to_string());
+
         // Verify defaults are reasonable (note: host might be set from previous test)
         assert!(host == "0.0.0.0" || host == "localhost");
         assert_eq!(port, 3000);
         assert_eq!(service_name, "realtime-api");
-        
+
         println!("✅ Default configuration validation passed");
     }
 }
 
 /// **Feature: realtime-saas-platform, Property 3: Tenant isolation enforcement**
-/// 
+///
 /// This property validates that tenant isolation is properly enforced at the database layer.
-/// For any published event, the system should enforce tenant and project scoping such that 
+/// For any published event, the system should enforce tenant and project scoping such that
 /// events never leak across tenant boundaries.
-/// 
+///
 /// **Validates: Requirements 1.3**
 
 #[cfg(test)]
 mod tenant_isolation_properties {
     use proptest::prelude::*;
 
-    
     // Generate valid tenant IDs for testing
     fn tenant_id_strategy() -> impl Strategy<Value = String> {
         prop::collection::vec(prop::char::range('a', 'z'), 8..20)
             .prop_map(|chars| format!("tenant_{}", chars.into_iter().collect::<String>()))
     }
-    
+
     // Generate valid project IDs for testing
     fn project_id_strategy() -> impl Strategy<Value = String> {
         prop::collection::vec(prop::char::range('a', 'z'), 8..20)
             .prop_map(|chars| format!("project_{}", chars.into_iter().collect::<String>()))
     }
-    
+
     // Generate SQL-like query strings for testing
     fn query_strategy() -> impl Strategy<Value = String> {
         prop_oneof![
@@ -109,7 +114,7 @@ mod tenant_isolation_properties {
             Just("INSERT INTO events (tenant_id, project_id, topic, payload) VALUES ($1, $2, $3, $4)".to_string()),
         ]
     }
-    
+
     proptest! {
         /// Property: Tenant isolation validation should always require tenant_id in queries
         /// For any tenant ID and database query, the validation function should only
@@ -126,22 +131,22 @@ mod tenant_isolation_properties {
                 query.contains(&format!("tenant_id = '{}'", tenant_id))
                     || query.contains("tenant_id = $")
             }
-            
+
             // Test that queries with proper tenant isolation pass validation
             let valid_query = query.replace("$1", &format!("'{}'", tenant_id));
             if valid_query.contains(&format!("tenant_id = '{}'", tenant_id)) {
                 assert!(validate_tenant_isolation(&tenant_id, &valid_query));
             }
-            
+
             // Test that queries without tenant isolation fail validation
             let invalid_query = "SELECT * FROM events";
             assert!(!validate_tenant_isolation(&tenant_id, invalid_query));
-            
+
             // Test that queries with wrong tenant ID fail validation
             let wrong_tenant_query = format!("SELECT * FROM events WHERE tenant_id = 'wrong_tenant'");
             assert!(!validate_tenant_isolation(&tenant_id, &wrong_tenant_query));
         }
-        
+
         /// Property: Cross-tenant data access should be prevented
         /// For any two different tenant IDs, operations scoped to one tenant
         /// should never access data from another tenant
@@ -155,15 +160,15 @@ mod tenant_isolation_properties {
             // Ensure we have different tenants and neither is a substring of the other
             prop_assume!(tenant_a != tenant_b);
             prop_assume!(!tenant_a.contains(&tenant_b) && !tenant_b.contains(&tenant_a));
-            
+
             // Simulate event creation for different tenants
             let _event_a_data = (tenant_a.clone(), project_a.clone(), "topic_a".to_string());
             let _event_b_data = (tenant_b.clone(), project_b.clone(), "topic_b".to_string());
-            
+
             // Verify that tenant A's query cannot access tenant B's data
             let query_a = format!("SELECT * FROM events WHERE tenant_id = '{}'", tenant_a);
             let query_b = format!("SELECT * FROM events WHERE tenant_id = '{}'", tenant_b);
-            
+
             // These queries should be completely isolated
             assert_ne!(query_a, query_b);
             assert!(query_a.contains(&tenant_a));
@@ -175,18 +180,18 @@ mod tenant_isolation_properties {
 }
 
 /// **Feature: realtime-saas-platform, Property 16: API key validation and scope enforcement**
-/// 
+///
 /// This property validates that API key validation and scope enforcement work correctly.
-/// For any API key usage, the system should validate the key hash and enforce 
+/// For any API key usage, the system should validate the key hash and enforce
 /// scope-based permissions correctly.
-/// 
+///
 /// **Validates: Requirements 4.2**
 
 #[cfg(test)]
 mod api_key_validation_properties {
     use proptest::prelude::*;
     use std::collections::HashSet;
-    
+
     // Define scopes for testing
     #[derive(Debug, Clone, PartialEq, Eq, Hash)]
     enum TestScope {
@@ -196,7 +201,7 @@ mod api_key_validation_properties {
         AdminWrite,
         BillingRead,
     }
-    
+
     // Generate scope combinations for testing
     fn scopes_strategy() -> impl Strategy<Value = Vec<TestScope>> {
         prop::collection::vec(
@@ -207,20 +212,21 @@ mod api_key_validation_properties {
                 Just(TestScope::AdminWrite),
                 Just(TestScope::BillingRead),
             ],
-            1..=5
-        ).prop_map(|scopes| {
+            1..=5,
+        )
+        .prop_map(|scopes| {
             // Remove duplicates
             let unique_scopes: HashSet<_> = scopes.into_iter().collect();
             unique_scopes.into_iter().collect()
         })
     }
-    
+
     // Generate API key strings for testing
     fn api_key_strategy() -> impl Strategy<Value = String> {
         prop::collection::vec(prop::char::range('A', 'z'), 64..=64)
             .prop_map(|chars| format!("rtp_{}", chars.into_iter().collect::<String>()))
     }
-    
+
     proptest! {
         /// Property: API key validation should correctly verify key format and scopes
         /// For any API key with assigned scopes, validation should correctly identify
@@ -240,10 +246,10 @@ mod api_key_validation_properties {
             // Validate API key format
             assert!(api_key.starts_with("rtp_"));
             assert_eq!(api_key.len(), 68); // "rtp_" + 64 characters
-            
+
             // Test scope enforcement logic
             let has_required_scope = assigned_scopes.contains(&required_scope);
-            
+
             // Simulate scope checking
             if has_required_scope {
                 // Should pass scope validation
@@ -252,13 +258,13 @@ mod api_key_validation_properties {
                 // Should fail scope validation
                 assert!(!assigned_scopes.iter().any(|s| s == &required_scope));
             }
-            
+
             // Validate that scope checking is deterministic
             let scope_check_1 = assigned_scopes.contains(&required_scope);
             let scope_check_2 = assigned_scopes.contains(&required_scope);
             assert_eq!(scope_check_1, scope_check_2);
         }
-        
+
         /// Property: API key hash validation should be consistent
         /// For any API key, hashing should produce consistent results
         #[test]
@@ -267,28 +273,28 @@ mod api_key_validation_properties {
         ) {
             // Test SHA-256 hash consistency (for lookup)
             use sha2::{Digest, Sha256};
-            
+
             let mut hasher1 = Sha256::new();
             hasher1.update(api_key.as_bytes());
             let hash1 = format!("{:x}", hasher1.finalize());
-            
+
             let mut hasher2 = Sha256::new();
             hasher2.update(api_key.as_bytes());
             let hash2 = format!("{:x}", hasher2.finalize());
-            
+
             // Hashes should be identical for the same input
             assert_eq!(hash1, hash2);
             assert_eq!(hash1.len(), 64); // SHA-256 produces 64 character hex string
-            
+
             // Different keys should produce different hashes
             let different_key = format!("{}_different", api_key);
             let mut hasher3 = Sha256::new();
             hasher3.update(different_key.as_bytes());
             let hash3 = format!("{:x}", hasher3.finalize());
-            
+
             assert_ne!(hash1, hash3);
         }
-        
+
         /// Property: Scope enforcement should prevent unauthorized access
         /// For any API key without a required scope, access should be denied
         #[test]
@@ -304,13 +310,13 @@ mod api_key_validation_properties {
         ) {
             // Ensure we test cases where the scope is not assigned
             prop_assume!(!assigned_scopes.contains(&unauthorized_scope));
-            
+
             // Simulate authorization check
             let is_authorized = assigned_scopes.contains(&unauthorized_scope);
-            
+
             // Should be false since we assumed the scope is not assigned
             assert!(!is_authorized);
-            
+
             // Verify that adding the scope would grant access
             let mut scopes_with_permission = assigned_scopes.clone();
             scopes_with_permission.push(unauthorized_scope.clone());
@@ -320,18 +326,18 @@ mod api_key_validation_properties {
 }
 
 /// **Feature: realtime-saas-platform, Property 15: API key generation security**
-/// 
+///
 /// This property validates that API key generation produces cryptographically secure keys
 /// with configurable scopes. For any API key creation request, the system should generate
 /// cryptographically secure keys with configurable scopes.
-/// 
+///
 /// **Validates: Requirements 4.1**
 
 #[cfg(test)]
 mod api_key_generation_properties {
     use proptest::prelude::*;
     use std::collections::HashSet;
-    
+
     // Define scopes for testing
     #[derive(Debug, Clone, PartialEq, Eq, Hash)]
     enum TestScope {
@@ -341,7 +347,7 @@ mod api_key_generation_properties {
         AdminWrite,
         BillingRead,
     }
-    
+
     // Generate scope combinations for testing
     fn scopes_strategy() -> impl Strategy<Value = Vec<TestScope>> {
         prop::collection::vec(
@@ -352,19 +358,20 @@ mod api_key_generation_properties {
                 Just(TestScope::AdminWrite),
                 Just(TestScope::BillingRead),
             ],
-            1..=5
-        ).prop_map(|scopes| {
+            1..=5,
+        )
+        .prop_map(|scopes| {
             // Remove duplicates
             let unique_scopes: HashSet<_> = scopes.into_iter().collect();
             unique_scopes.into_iter().collect()
         })
     }
-    
+
     // Generate rate limits for testing
     fn rate_limit_strategy() -> impl Strategy<Value = i32> {
         1i32..=10000i32
     }
-    
+
     proptest! {
         /// Property: API key generation should produce unique, secure keys
         /// For any set of scopes and rate limits, generated API keys should be
@@ -379,31 +386,31 @@ mod api_key_generation_properties {
             // Simulate API key generation
             let api_key_id = uuid::Uuid::new_v4().to_string();
             let key_hash = format!("hash_{}", uuid::Uuid::new_v4().to_string().replace("-", ""));
-            
+
             // Validate key properties
             assert!(!api_key_id.is_empty());
             assert!(api_key_id.len() == 36); // UUID length
-            
+
             // Validate key hash properties (should be cryptographically secure)
             assert!(!key_hash.is_empty());
             assert!(key_hash.len() >= 32); // Minimum secure hash length
             assert!(key_hash.starts_with("hash_")); // Our test prefix
-            
+
             // Validate scopes are preserved
             assert!(!scopes.is_empty());
             assert!(scopes.len() <= 5); // Maximum number of scopes
-            
+
             // Validate rate limit is reasonable
             assert!(rate_limit > 0);
             assert!(rate_limit <= 10000);
-            
+
             // Validate tenant and project IDs are properly formatted
             assert!(!tenant_id.is_empty());
             assert!(!project_id.is_empty());
             assert!(tenant_id.len() >= 8);
             assert!(project_id.len() >= 8);
         }
-        
+
         /// Property: API key uniqueness across multiple generations
         /// For any number of API key generation requests, each key should be unique
         #[test]
@@ -413,25 +420,25 @@ mod api_key_generation_properties {
         ) {
             let mut generated_keys = HashSet::new();
             let mut generated_hashes = HashSet::new();
-            
+
             for i in 0..count {
                 // Generate unique API key components
                 let api_key_id = uuid::Uuid::new_v4().to_string();
                 let key_hash = format!("hash_{}_{}", i, uuid::Uuid::new_v4().to_string().replace("-", ""));
-                
+
                 // Ensure uniqueness
                 assert!(!generated_keys.contains(&api_key_id), "API key ID should be unique");
                 assert!(!generated_hashes.contains(&key_hash), "API key hash should be unique");
-                
+
                 generated_keys.insert(api_key_id);
                 generated_hashes.insert(key_hash);
             }
-            
+
             // Verify we generated the expected number of unique keys
             assert_eq!(generated_keys.len(), count);
             assert_eq!(generated_hashes.len(), count);
         }
-        
+
         /// Property: API key scope validation
         /// For any API key with specific scopes, scope checking should work correctly
         #[test]
@@ -447,14 +454,14 @@ mod api_key_generation_properties {
         ) {
             // Simulate API key with assigned scopes
             let has_scope = assigned_scopes.contains(&test_scope);
-            
+
             // Validate scope checking logic
             if has_scope {
                 assert!(assigned_scopes.iter().any(|s| s == &test_scope));
             } else {
                 assert!(!assigned_scopes.iter().any(|s| s == &test_scope));
             }
-            
+
             // Validate that scope checking is consistent
             let scope_check_result = assigned_scopes.contains(&test_scope);
             assert_eq!(has_scope, scope_check_result);
@@ -463,18 +470,18 @@ mod api_key_generation_properties {
 }
 
 /// **Feature: realtime-saas-platform, Property 4: Permission-based rejection**
-/// 
+///
 /// This property validates that API keys lacking publish permissions are properly rejected.
-/// For any API key lacking publish permissions, the system should reject requests 
+/// For any API key lacking publish permissions, the system should reject requests
 /// with appropriate error codes.
-/// 
+///
 /// **Validates: Requirements 1.4**
 
 #[cfg(test)]
 mod permission_based_rejection_properties {
     use proptest::prelude::*;
     use std::collections::HashSet;
-    
+
     // Define scopes for testing
     #[derive(Debug, Clone, PartialEq, Eq, Hash)]
     enum TestScope {
@@ -484,7 +491,7 @@ mod permission_based_rejection_properties {
         AdminWrite,
         BillingRead,
     }
-    
+
     // Generate scope combinations that exclude EventsPublish
     fn scopes_without_publish_strategy() -> impl Strategy<Value = Vec<TestScope>> {
         prop::collection::vec(
@@ -494,8 +501,9 @@ mod permission_based_rejection_properties {
                 Just(TestScope::AdminWrite),
                 Just(TestScope::BillingRead),
             ],
-            0..=4
-        ).prop_map(|scopes| {
+            0..=4,
+        )
+        .prop_map(|scopes| {
             // Remove duplicates and ensure EventsPublish is not included
             let unique_scopes: HashSet<_> = scopes.into_iter().collect();
             let mut result: Vec<_> = unique_scopes.into_iter().collect();
@@ -503,7 +511,7 @@ mod permission_based_rejection_properties {
             result
         })
     }
-    
+
     // Generate scope combinations that include EventsPublish
     fn scopes_with_publish_strategy() -> impl Strategy<Value = Vec<TestScope>> {
         prop::collection::vec(
@@ -513,8 +521,9 @@ mod permission_based_rejection_properties {
                 Just(TestScope::AdminWrite),
                 Just(TestScope::BillingRead),
             ],
-            0..=3
-        ).prop_map(|mut scopes| {
+            0..=3,
+        )
+        .prop_map(|mut scopes| {
             // Always include EventsPublish
             scopes.push(TestScope::EventsPublish);
             // Remove duplicates
@@ -522,7 +531,7 @@ mod permission_based_rejection_properties {
             unique_scopes.into_iter().collect()
         })
     }
-    
+
     proptest! {
         /// Property: API keys without publish permission should be rejected
         /// For any API key that lacks EventsPublish scope, requests requiring
@@ -533,24 +542,24 @@ mod permission_based_rejection_properties {
         ) {
             // Ensure the scopes don't contain EventsPublish
             assert!(!scopes_without_publish.contains(&TestScope::EventsPublish));
-            
+
             // Simulate permission check for publish operation
             let has_publish_permission = scopes_without_publish.contains(&TestScope::EventsPublish);
-            
+
             // Should be false since we generated scopes without publish
             assert!(!has_publish_permission);
-            
+
             // Simulate error code generation for insufficient permissions
             let error_code = if has_publish_permission {
                 200 // OK
             } else {
                 403 // Forbidden
             };
-            
+
             // Should return 403 Forbidden
             assert_eq!(error_code, 403);
         }
-        
+
         /// Property: API keys with publish permission should be accepted
         /// For any API key that has EventsPublish scope, requests requiring
         /// publish permission should be accepted
@@ -560,24 +569,24 @@ mod permission_based_rejection_properties {
         ) {
             // Ensure the scopes contain EventsPublish
             assert!(scopes_with_publish.contains(&TestScope::EventsPublish));
-            
+
             // Simulate permission check for publish operation
             let has_publish_permission = scopes_with_publish.contains(&TestScope::EventsPublish);
-            
+
             // Should be true since we generated scopes with publish
             assert!(has_publish_permission);
-            
+
             // Simulate success code for sufficient permissions
             let status_code = if has_publish_permission {
                 200 // OK
             } else {
                 403 // Forbidden
             };
-            
+
             // Should return 200 OK
             assert_eq!(status_code, 200);
         }
-        
+
         /// Property: Permission checking should be consistent across operations
         /// For any set of scopes and required permission, the permission check
         /// should always return the same result
@@ -608,16 +617,16 @@ mod permission_based_rejection_properties {
             let check1 = scopes.contains(&required_scope);
             let check2 = scopes.contains(&required_scope);
             let check3 = scopes.contains(&required_scope);
-            
+
             // All checks should return the same result
             assert_eq!(check1, check2);
             assert_eq!(check2, check3);
-            
+
             // Verify the logic is correct
             let expected = scopes.iter().any(|s| s == &required_scope);
             assert_eq!(check1, expected);
         }
-        
+
         /// Property: Multiple permission requirements should all be satisfied
         /// For any API key and multiple required scopes, all scopes must be present
         /// for the operation to be authorized
@@ -653,15 +662,15 @@ mod permission_based_rejection_properties {
             // Check if all required scopes are available
             let has_all_required = required_scopes.iter()
                 .all(|req_scope| available_scopes.contains(req_scope));
-            
+
             // Verify the logic by checking each scope individually
             let individual_checks: Vec<bool> = required_scopes.iter()
                 .map(|req_scope| available_scopes.contains(req_scope))
                 .collect();
-            
+
             let expected_result = individual_checks.iter().all(|&check| check);
             assert_eq!(has_all_required, expected_result);
-            
+
             // If any required scope is missing, authorization should fail
             if !has_all_required {
                 let missing_scopes: Vec<_> = required_scopes.iter()
@@ -673,11 +682,11 @@ mod permission_based_rejection_properties {
     }
 }
 /// **Feature: realtime-saas-platform, Property 5: Rate limiting enforcement**
-/// 
+///
 /// This property validates that rate limiting is properly enforced per API key.
-/// For any request burst exceeding rate limits, the system should throttle 
+/// For any request burst exceeding rate limits, the system should throttle
 /// requests and return proper rate limit headers.
-/// 
+///
 /// **Validates: Requirements 1.5**
 
 #[cfg(test)]
@@ -685,14 +694,14 @@ mod rate_limiting_properties {
     use proptest::prelude::*;
     use std::collections::HashMap;
     use std::time::{Duration, Instant};
-    
+
     // Simulate a rate limiter
     #[derive(Debug, Clone)]
     struct RateLimiter {
         limits: HashMap<String, (u32, Instant)>, // (count, window_start)
         limit_per_sec: u32,
     }
-    
+
     impl RateLimiter {
         fn new(limit_per_sec: u32) -> Self {
             Self {
@@ -700,31 +709,37 @@ mod rate_limiting_properties {
                 limit_per_sec,
             }
         }
-        
+
         fn check_rate_limit(&mut self, identifier: &str) -> Result<(), String> {
             let now = Instant::now();
-            let entry = self.limits.entry(identifier.to_string()).or_insert((0, now));
-            
+            let entry = self
+                .limits
+                .entry(identifier.to_string())
+                .or_insert((0, now));
+
             // Reset window if more than 1 second has passed
             if now.duration_since(entry.1) >= Duration::from_secs(1) {
                 entry.0 = 0;
                 entry.1 = now;
             }
-            
+
             // Check if limit is exceeded
             if entry.0 >= self.limit_per_sec {
                 return Err("Rate limit exceeded".to_string());
             }
-            
+
             // Increment counter
             entry.0 += 1;
             Ok(())
         }
-        
+
         fn get_current_count(&self, identifier: &str) -> u32 {
-            self.limits.get(identifier).map(|(count, _)| *count).unwrap_or(0)
+            self.limits
+                .get(identifier)
+                .map(|(count, _)| *count)
+                .unwrap_or(0)
         }
-        
+
         fn reset_window(&mut self, identifier: &str) {
             if let Some(entry) = self.limits.get_mut(identifier) {
                 entry.0 = 0;
@@ -732,18 +747,18 @@ mod rate_limiting_properties {
             }
         }
     }
-    
+
     // Generate rate limits for testing
     fn rate_limit_strategy() -> impl Strategy<Value = u32> {
         1u32..=1000u32
     }
-    
+
     // Generate API key identifiers for testing
     fn api_key_id_strategy() -> impl Strategy<Value = String> {
         prop::collection::vec(prop::char::range('a', 'z'), 8..20)
             .prop_map(|chars| format!("key_{}", chars.into_iter().collect::<String>()))
     }
-    
+
     proptest! {
         /// Property: Rate limiting should enforce per-second limits
         /// For any API key and rate limit, requests should be allowed up to the limit
@@ -754,25 +769,25 @@ mod rate_limiting_properties {
             api_key_id in api_key_id_strategy()
         ) {
             let mut rate_limiter = RateLimiter::new(rate_limit);
-            
+
             // Should allow requests up to the limit
             for i in 0..rate_limit {
                 let result = rate_limiter.check_rate_limit(&api_key_id);
                 assert!(result.is_ok(), "Request {} should be allowed (limit: {})", i + 1, rate_limit);
                 assert_eq!(rate_limiter.get_current_count(&api_key_id), i + 1);
             }
-            
+
             // Should reject requests beyond the limit
             let result = rate_limiter.check_rate_limit(&api_key_id);
             assert!(result.is_err(), "Request beyond limit should be rejected");
             assert_eq!(rate_limiter.get_current_count(&api_key_id), rate_limit);
-            
+
             // After resetting the window, should allow requests again
             rate_limiter.reset_window(&api_key_id);
             let result = rate_limiter.check_rate_limit(&api_key_id);
             assert!(result.is_ok(), "Request after window reset should be allowed");
         }
-        
+
         /// Property: Rate limiting should be isolated per API key
         /// For any two different API keys, rate limits should be enforced independently
         #[test]
@@ -783,28 +798,28 @@ mod rate_limiting_properties {
         ) {
             // Ensure we have different API keys
             prop_assume!(api_key_1 != api_key_2);
-            
+
             let mut rate_limiter = RateLimiter::new(rate_limit);
-            
+
             // Exhaust rate limit for first API key
             for _ in 0..rate_limit {
                 let result = rate_limiter.check_rate_limit(&api_key_1);
                 assert!(result.is_ok());
             }
-            
+
             // First API key should be rate limited
             let result = rate_limiter.check_rate_limit(&api_key_1);
             assert!(result.is_err());
-            
+
             // Second API key should still be allowed
             let result = rate_limiter.check_rate_limit(&api_key_2);
             assert!(result.is_ok(), "Different API key should not be affected by other key's rate limit");
-            
+
             // Verify counts are independent
             assert_eq!(rate_limiter.get_current_count(&api_key_1), rate_limit);
             assert_eq!(rate_limiter.get_current_count(&api_key_2), 1);
         }
-        
+
         /// Property: Rate limiting should reset after time window
         /// For any API key that has been rate limited, the limit should reset
         /// after the time window expires
@@ -814,26 +829,26 @@ mod rate_limiting_properties {
             api_key_id in api_key_id_strategy()
         ) {
             let mut rate_limiter = RateLimiter::new(rate_limit);
-            
+
             // Exhaust the rate limit
             for _ in 0..rate_limit {
                 let result = rate_limiter.check_rate_limit(&api_key_id);
                 assert!(result.is_ok());
             }
-            
+
             // Should be rate limited now
             let result = rate_limiter.check_rate_limit(&api_key_id);
             assert!(result.is_err());
-            
+
             // Manually reset the window (simulating time passage)
             rate_limiter.reset_window(&api_key_id);
-            
+
             // Should be allowed again after reset
             let result = rate_limiter.check_rate_limit(&api_key_id);
             assert!(result.is_ok());
             assert_eq!(rate_limiter.get_current_count(&api_key_id), 1);
         }
-        
+
         /// Property: Rate limiting should handle concurrent requests correctly
         /// For any API key, the rate limiter should maintain accurate counts
         /// even when processing multiple requests
@@ -846,7 +861,7 @@ mod rate_limiting_properties {
             let mut rate_limiter = RateLimiter::new(rate_limit);
             let mut successful_requests = 0u32;
             let mut failed_requests = 0u32;
-            
+
             // Process multiple requests
             for _ in 0..request_count {
                 match rate_limiter.check_rate_limit(&api_key_id) {
@@ -854,24 +869,24 @@ mod rate_limiting_properties {
                     Err(_) => failed_requests += 1,
                 }
             }
-            
+
             // Verify that successful requests don't exceed the rate limit
-            assert!(successful_requests <= rate_limit, 
-                "Successful requests ({}) should not exceed rate limit ({})", 
+            assert!(successful_requests <= rate_limit,
+                "Successful requests ({}) should not exceed rate limit ({})",
                 successful_requests, rate_limit);
-            
+
             // Verify that the count matches successful requests
             assert_eq!(rate_limiter.get_current_count(&api_key_id), successful_requests);
-            
+
             // Verify total requests processed
             assert_eq!(successful_requests + failed_requests, request_count as u32);
-            
+
             // If we made more requests than the limit, some should have failed
             if request_count as u32 > rate_limit {
                 assert!(failed_requests > 0, "Some requests should have been rate limited");
             }
         }
-        
+
         /// Property: Different rate limits should be enforced correctly
         /// For any API key with a specific rate limit, that exact limit should be enforced
         #[test]
@@ -882,30 +897,30 @@ mod rate_limiting_properties {
         ) {
             // Test with first rate limit
             let mut rate_limiter_1 = RateLimiter::new(rate_limit_1);
-            
+
             // Should allow exactly rate_limit_1 requests
             for i in 0..rate_limit_1 {
                 let result = rate_limiter_1.check_rate_limit(&api_key_id);
                 assert!(result.is_ok(), "Request {} should be allowed with limit {}", i + 1, rate_limit_1);
             }
-            
+
             // Should reject the next request
             let result = rate_limiter_1.check_rate_limit(&api_key_id);
             assert!(result.is_err(), "Request beyond limit {} should be rejected", rate_limit_1);
-            
+
             // Test with second rate limit (higher)
             let mut rate_limiter_2 = RateLimiter::new(rate_limit_2);
-            
+
             // Should allow exactly rate_limit_2 requests
             for i in 0..rate_limit_2 {
                 let result = rate_limiter_2.check_rate_limit(&api_key_id);
                 assert!(result.is_ok(), "Request {} should be allowed with limit {}", i + 1, rate_limit_2);
             }
-            
+
             // Should reject the next request
             let result = rate_limiter_2.check_rate_limit(&api_key_id);
             assert!(result.is_err(), "Request beyond limit {} should be rejected", rate_limit_2);
-            
+
             // Verify the counts are different
             assert_eq!(rate_limiter_1.get_current_count(&api_key_id), rate_limit_1);
             assert_eq!(rate_limiter_2.get_current_count(&api_key_id), rate_limit_2);
@@ -915,24 +930,24 @@ mod rate_limiting_properties {
 }
 
 /// **Feature: realtime-saas-platform, Property 29: NATS JetStream persistence**
-/// 
+///
 /// This property validates that events are properly persisted using NATS JetStream for durability.
 /// For any published event, the system should persist events using NATS JetStream for durability.
-/// 
+///
 /// **Validates: Requirements 10.1**
 
 #[cfg(test)]
 mod nats_jetstream_persistence_properties {
     use proptest::prelude::*;
     use serde_json::json;
-    
+
     // Simulate NATS JetStream persistence
     #[derive(Debug, Clone)]
     struct MockJetStreamStore {
         events: Vec<(String, serde_json::Value, u64)>, // (subject, event_data, sequence)
         next_sequence: u64,
     }
-    
+
     impl MockJetStreamStore {
         fn new() -> Self {
             Self {
@@ -940,14 +955,19 @@ mod nats_jetstream_persistence_properties {
                 next_sequence: 1,
             }
         }
-        
-        fn persist_event(&mut self, subject: &str, event_data: serde_json::Value) -> Result<u64, String> {
+
+        fn persist_event(
+            &mut self,
+            subject: &str,
+            event_data: serde_json::Value,
+        ) -> Result<u64, String> {
             let sequence = self.next_sequence;
-            self.events.push((subject.to_string(), event_data, sequence));
+            self.events
+                .push((subject.to_string(), event_data, sequence));
             self.next_sequence += 1;
             Ok(sequence)
         }
-        
+
         fn get_event(&self, subject: &str) -> Option<(serde_json::Value, u64)> {
             // Find the last event with this subject (most recent)
             self.events
@@ -956,7 +976,7 @@ mod nats_jetstream_persistence_properties {
                 .find(|(subj, _, _)| subj == subject)
                 .map(|(_, data, seq)| (data.clone(), *seq))
         }
-        
+
         fn get_events_by_tenant(&self, tenant_id: &str) -> Vec<(String, serde_json::Value, u64)> {
             self.events
                 .iter()
@@ -964,24 +984,24 @@ mod nats_jetstream_persistence_properties {
                 .map(|(subject, data, seq)| (subject.clone(), data.clone(), *seq))
                 .collect()
         }
-        
+
         fn event_count(&self) -> usize {
             self.events.len()
         }
     }
-    
+
     // Generate tenant IDs for testing
     fn tenant_id_strategy() -> impl Strategy<Value = String> {
         prop::collection::vec(prop::char::range('a', 'z'), 8..20)
             .prop_map(|chars| format!("tenant_{}", chars.into_iter().collect::<String>()))
     }
-    
+
     // Generate project IDs for testing
     fn project_id_strategy() -> impl Strategy<Value = String> {
         prop::collection::vec(prop::char::range('a', 'z'), 8..20)
             .prop_map(|chars| format!("project_{}", chars.into_iter().collect::<String>()))
     }
-    
+
     // Generate topic names for testing
     fn topic_strategy() -> impl Strategy<Value = String> {
         prop_oneof![
@@ -993,7 +1013,7 @@ mod nats_jetstream_persistence_properties {
             Just("notification.sent".to_string()),
         ]
     }
-    
+
     // Generate event payloads for testing
     fn event_payload_strategy() -> impl Strategy<Value = serde_json::Value> {
         prop_oneof![
@@ -1003,7 +1023,7 @@ mod nats_jetstream_persistence_properties {
             Just(json!({"type": "system_event", "component": "auth", "status": "healthy"})),
         ]
     }
-    
+
     proptest! {
         /// Property: Event persistence should store events durably in JetStream
         /// For any published event, the event should be persisted and retrievable
@@ -1016,10 +1036,10 @@ mod nats_jetstream_persistence_properties {
             payload in event_payload_strategy()
         ) {
             let mut jetstream_store = MockJetStreamStore::new();
-            
+
             // Create the JetStream subject with tenant/project scoping
             let subject = format!("events.{}.{}.{}", tenant_id, project_id, topic);
-            
+
             // Create event data
             let event_data = json!({
                 "id": uuid::Uuid::new_v4().to_string(),
@@ -1029,28 +1049,28 @@ mod nats_jetstream_persistence_properties {
                 "payload": payload,
                 "published_at": chrono::Utc::now().to_rfc3339()
             });
-            
+
             // Persist the event
             let sequence = jetstream_store.persist_event(&subject, event_data.clone())
                 .expect("Event persistence should succeed");
-            
+
             // Verify the event was persisted
             assert!(sequence > 0, "Sequence number should be positive");
-            
+
             // Retrieve the event and verify it matches
             let stored_event = jetstream_store.get_event(&subject)
                 .expect("Persisted event should be retrievable");
-            
+
             assert_eq!(stored_event.0, event_data, "Stored event data should match original");
             assert_eq!(stored_event.1, sequence, "Stored sequence should match returned sequence");
-            
+
             // Verify tenant isolation - events should be scoped to tenant
             let tenant_events = jetstream_store.get_events_by_tenant(&tenant_id);
             assert!(!tenant_events.is_empty(), "Should find events for the tenant");
-            assert!(tenant_events.iter().any(|(subj, _, _)| subj == &subject), 
+            assert!(tenant_events.iter().any(|(subj, _, _)| subj == &subject),
                 "Should find the specific event for the tenant");
         }
-        
+
         /// Property: Event persistence should maintain order with sequence numbers
         /// For any sequence of events, JetStream should assign monotonically increasing
         /// sequence numbers that preserve the order of persistence
@@ -1064,10 +1084,10 @@ mod nats_jetstream_persistence_properties {
         ) {
             // Take the minimum length to ensure we have matching pairs
             let count = event_count.min(topics.len()).min(payloads.len());
-            
+
             let mut jetstream_store = MockJetStreamStore::new();
             let mut sequences = Vec::new();
-            
+
             // Persist multiple events
             for (i, (topic, payload)) in topics.iter().take(count).zip(payloads.iter().take(count)).enumerate() {
                 let subject = format!("events.{}.{}.{}", tenant_id, project_id, topic);
@@ -1079,24 +1099,24 @@ mod nats_jetstream_persistence_properties {
                     "payload": payload,
                     "published_at": chrono::Utc::now().to_rfc3339()
                 });
-                
+
                 let sequence = jetstream_store.persist_event(&subject, event_data)
                     .expect("Event persistence should succeed");
                 sequences.push(sequence);
             }
-            
+
             // Verify sequences are monotonically increasing
             for i in 1..sequences.len() {
-                assert!(sequences[i] > sequences[i-1], 
-                    "Sequence numbers should be monotonically increasing: {} should be > {}", 
+                assert!(sequences[i] > sequences[i-1],
+                    "Sequence numbers should be monotonically increasing: {} should be > {}",
                     sequences[i], sequences[i-1]);
             }
-            
+
             // Verify all events were persisted
-            assert_eq!(jetstream_store.event_count(), count, 
+            assert_eq!(jetstream_store.event_count(), count,
                 "All events should be persisted");
         }
-        
+
         /// Property: Event persistence should handle tenant isolation
         /// For any events from different tenants, they should be stored separately
         /// and not interfere with each other
@@ -1112,13 +1132,13 @@ mod nats_jetstream_persistence_properties {
         ) {
             // Ensure we have different tenants
             prop_assume!(tenant_a != tenant_b);
-            
+
             let mut jetstream_store = MockJetStreamStore::new();
-            
+
             // Create subjects for different tenants
             let subject_a = format!("events.{}.{}.{}", tenant_a, project_a, topic);
             let subject_b = format!("events.{}.{}.{}", tenant_b, project_b, topic);
-            
+
             // Create event data for both tenants
             let event_data_a = json!({
                 "id": "event_a",
@@ -1128,7 +1148,7 @@ mod nats_jetstream_persistence_properties {
                 "payload": payload_a,
                 "published_at": chrono::Utc::now().to_rfc3339()
             });
-            
+
             let event_data_b = json!({
                 "id": "event_b",
                 "tenant_id": tenant_b,
@@ -1137,36 +1157,36 @@ mod nats_jetstream_persistence_properties {
                 "payload": payload_b,
                 "published_at": chrono::Utc::now().to_rfc3339()
             });
-            
+
             // Persist events for both tenants
             let seq_a = jetstream_store.persist_event(&subject_a, event_data_a.clone())
                 .expect("Event A persistence should succeed");
             let seq_b = jetstream_store.persist_event(&subject_b, event_data_b.clone())
                 .expect("Event B persistence should succeed");
-            
+
             // Verify both events are stored
             assert_ne!(seq_a, seq_b, "Different events should have different sequences");
-            
+
             // Verify tenant isolation - each tenant should only see their own events
             let events_a = jetstream_store.get_events_by_tenant(&tenant_a);
             let events_b = jetstream_store.get_events_by_tenant(&tenant_b);
-            
+
             assert_eq!(events_a.len(), 1, "Tenant A should have exactly one event");
             assert_eq!(events_b.len(), 1, "Tenant B should have exactly one event");
-            
+
             // Verify events don't cross tenant boundaries
-            assert!(events_a.iter().all(|(subj, _, _)| subj.contains(&tenant_a)), 
+            assert!(events_a.iter().all(|(subj, _, _)| subj.contains(&tenant_a)),
                 "All events for tenant A should contain tenant A ID");
-            assert!(events_b.iter().all(|(subj, _, _)| subj.contains(&tenant_b)), 
+            assert!(events_b.iter().all(|(subj, _, _)| subj.contains(&tenant_b)),
                 "All events for tenant B should contain tenant B ID");
-            
+
             // Verify no cross-contamination
-            assert!(!events_a.iter().any(|(subj, _, _)| subj.contains(&tenant_b)), 
+            assert!(!events_a.iter().any(|(subj, _, _)| subj.contains(&tenant_b)),
                 "Tenant A events should not contain tenant B ID");
-            assert!(!events_b.iter().any(|(subj, _, _)| subj.contains(&tenant_a)), 
+            assert!(!events_b.iter().any(|(subj, _, _)| subj.contains(&tenant_a)),
                 "Tenant B events should not contain tenant A ID");
         }
-        
+
         /// Property: Event persistence should be idempotent for duplicate events
         /// For any event that is persisted multiple times with the same ID,
         /// the system should handle it gracefully (either reject duplicates or store them)
@@ -1179,7 +1199,7 @@ mod nats_jetstream_persistence_properties {
         ) {
             let mut jetstream_store = MockJetStreamStore::new();
             let subject = format!("events.{}.{}.{}", tenant_id, project_id, topic);
-            
+
             let event_id = uuid::Uuid::new_v4().to_string();
             let event_data = json!({
                 "id": event_id,
@@ -1189,22 +1209,22 @@ mod nats_jetstream_persistence_properties {
                 "payload": payload,
                 "published_at": chrono::Utc::now().to_rfc3339()
             });
-            
+
             // Persist the same event multiple times
             let seq1 = jetstream_store.persist_event(&subject, event_data.clone())
                 .expect("First persistence should succeed");
             let seq2 = jetstream_store.persist_event(&format!("{}_duplicate", subject), event_data.clone())
                 .expect("Second persistence should succeed");
-            
+
             // In JetStream, each publish gets a new sequence number
             // This tests that the system can handle multiple events
             assert_ne!(seq1, seq2, "Different publishes should get different sequences");
             assert!(seq2 > seq1, "Later sequence should be higher");
-            
+
             // Verify both events are stored (JetStream allows duplicates by design)
             assert!(jetstream_store.event_count() >= 2, "Both events should be stored");
         }
-        
+
         /// Property: Event persistence should maintain data integrity
         /// For any event data, the persisted version should exactly match the original
         /// without any data corruption or modification
@@ -1217,7 +1237,7 @@ mod nats_jetstream_persistence_properties {
         ) {
             let mut jetstream_store = MockJetStreamStore::new();
             let subject = format!("events.{}.{}.{}", tenant_id, project_id, topic);
-            
+
             // Create complex event data with various data types
             let event_data = json!({
                 "id": uuid::Uuid::new_v4().to_string(),
@@ -1234,25 +1254,25 @@ mod nats_jetstream_persistence_properties {
                     "null_value": null
                 }
             });
-            
+
             // Persist the event
             let sequence = jetstream_store.persist_event(&subject, event_data.clone())
                 .expect("Event persistence should succeed");
-            
+
             // Retrieve and verify data integrity
             let stored_event = jetstream_store.get_event(&subject)
                 .expect("Event should be retrievable");
-            
+
             // Verify complete data integrity
             assert_eq!(stored_event.0, event_data, "Stored data should exactly match original");
             assert_eq!(stored_event.1, sequence, "Sequence should match");
-            
+
             // Verify specific fields to ensure no corruption
             assert_eq!(stored_event.0["tenant_id"], tenant_id);
             assert_eq!(stored_event.0["project_id"], project_id);
             assert_eq!(stored_event.0["topic"], topic);
             assert_eq!(stored_event.0["payload"], payload);
-            
+
             // Verify complex nested data
             assert_eq!(stored_event.0["metadata"]["version"], "1.0");
             assert_eq!(stored_event.0["metadata"]["numbers"], json!([1, 2, 3, 4, 5]));
@@ -1263,34 +1283,34 @@ mod nats_jetstream_persistence_properties {
 }
 
 /// **Feature: realtime-saas-platform, Property 30: Cursor-based event replay**
-/// 
+///
 /// This property validates that event replay functionality works correctly with cursor support.
-/// For any event replay request, the system should provide cursor-based replay from specific 
+/// For any event replay request, the system should provide cursor-based replay from specific
 /// timestamps or sequences.
-/// 
+///
 /// **Validates: Requirements 10.2**
 
 #[cfg(test)]
 mod cursor_based_event_replay_properties {
+    use chrono::{DateTime, Utc};
     use proptest::prelude::*;
     use serde_json::json;
     use std::collections::HashMap;
-    use chrono::{DateTime, Utc};
-    
+
     // Simulate event cursor for replay
     #[derive(Debug, Clone, PartialEq)]
     struct EventCursor {
         sequence: u64,
         timestamp: DateTime<Utc>,
     }
-    
+
     // Simulate event replay store
     #[derive(Debug, Clone)]
     struct MockEventReplayStore {
         events: Vec<(String, serde_json::Value, u64, DateTime<Utc>)>, // (subject, data, sequence, timestamp)
         next_sequence: u64,
     }
-    
+
     impl MockEventReplayStore {
         fn new() -> Self {
             Self {
@@ -1298,18 +1318,29 @@ mod cursor_based_event_replay_properties {
                 next_sequence: 1,
             }
         }
-        
-        fn add_event(&mut self, subject: &str, event_data: serde_json::Value, timestamp: DateTime<Utc>) -> u64 {
+
+        fn add_event(
+            &mut self,
+            subject: &str,
+            event_data: serde_json::Value,
+            timestamp: DateTime<Utc>,
+        ) -> u64 {
             let sequence = self.next_sequence;
-            self.events.push((subject.to_string(), event_data, sequence, timestamp));
+            self.events
+                .push((subject.to_string(), event_data, sequence, timestamp));
             self.next_sequence += 1;
             sequence
         }
-        
-        fn replay_from_sequence(&self, tenant_id: &str, from_sequence: u64, limit: Option<usize>) -> Vec<(serde_json::Value, EventCursor)> {
+
+        fn replay_from_sequence(
+            &self,
+            tenant_id: &str,
+            from_sequence: u64,
+            limit: Option<usize>,
+        ) -> Vec<(serde_json::Value, EventCursor)> {
             let tenant_prefix = format!("events.{}", tenant_id);
             let mut results = Vec::new();
-            
+
             for (subject, data, sequence, timestamp) in &self.events {
                 if subject.starts_with(&tenant_prefix) && *sequence >= from_sequence {
                     let cursor = EventCursor {
@@ -1317,7 +1348,7 @@ mod cursor_based_event_replay_properties {
                         timestamp: *timestamp,
                     };
                     results.push((data.clone(), cursor));
-                    
+
                     if let Some(limit) = limit {
                         if results.len() >= limit {
                             break;
@@ -1325,14 +1356,19 @@ mod cursor_based_event_replay_properties {
                     }
                 }
             }
-            
+
             results
         }
-        
-        fn replay_from_timestamp(&self, tenant_id: &str, from_timestamp: DateTime<Utc>, limit: Option<usize>) -> Vec<(serde_json::Value, EventCursor)> {
+
+        fn replay_from_timestamp(
+            &self,
+            tenant_id: &str,
+            from_timestamp: DateTime<Utc>,
+            limit: Option<usize>,
+        ) -> Vec<(serde_json::Value, EventCursor)> {
             let tenant_prefix = format!("events.{}", tenant_id);
             let mut results = Vec::new();
-            
+
             for (subject, data, sequence, timestamp) in &self.events {
                 if subject.starts_with(&tenant_prefix) && *timestamp >= from_timestamp {
                     let cursor = EventCursor {
@@ -1340,7 +1376,7 @@ mod cursor_based_event_replay_properties {
                         timestamp: *timestamp,
                     };
                     results.push((data.clone(), cursor));
-                    
+
                     if let Some(limit) = limit {
                         if results.len() >= limit {
                             break;
@@ -1348,14 +1384,14 @@ mod cursor_based_event_replay_properties {
                     }
                 }
             }
-            
+
             results
         }
-        
+
         fn get_events_for_tenant(&self, tenant_id: &str) -> Vec<(serde_json::Value, EventCursor)> {
             let tenant_prefix = format!("events.{}", tenant_id);
             let mut results = Vec::new();
-            
+
             for (subject, data, sequence, timestamp) in &self.events {
                 if subject.starts_with(&tenant_prefix) {
                     let cursor = EventCursor {
@@ -1365,27 +1401,27 @@ mod cursor_based_event_replay_properties {
                     results.push((data.clone(), cursor));
                 }
             }
-            
+
             results
         }
-        
+
         fn event_count(&self) -> usize {
             self.events.len()
         }
     }
-    
+
     // Generate tenant IDs for testing
     fn tenant_id_strategy() -> impl Strategy<Value = String> {
         prop::collection::vec(prop::char::range('a', 'z'), 8..20)
             .prop_map(|chars| format!("tenant_{}", chars.into_iter().collect::<String>()))
     }
-    
+
     // Generate project IDs for testing
     fn project_id_strategy() -> impl Strategy<Value = String> {
         prop::collection::vec(prop::char::range('a', 'z'), 8..20)
             .prop_map(|chars| format!("project_{}", chars.into_iter().collect::<String>()))
     }
-    
+
     // Generate topic names for testing
     fn topic_strategy() -> impl Strategy<Value = String> {
         prop_oneof![
@@ -1395,7 +1431,7 @@ mod cursor_based_event_replay_properties {
             Just("payment.processed".to_string()),
         ]
     }
-    
+
     // Generate event payloads for testing
     fn event_payload_strategy() -> impl Strategy<Value = serde_json::Value> {
         prop_oneof![
@@ -1404,7 +1440,7 @@ mod cursor_based_event_replay_properties {
             Just(json!({"type": "payment_event", "amount": 99.99})),
         ]
     }
-    
+
     proptest! {
         /// Property: Event replay should return events from specified sequence
         /// For any tenant and starting sequence, replay should return all events
@@ -1416,10 +1452,10 @@ mod cursor_based_event_replay_properties {
             event_count in 3usize..=10usize,
             start_sequence in 1u64..=5u64
         ) {
-            
+
             let mut replay_store = MockEventReplayStore::new();
             let mut expected_sequences = Vec::new();
-            
+
             // Add events to the store
             for i in 0..event_count {
                 let topic = format!("topic_{}", i);
@@ -1429,32 +1465,32 @@ mod cursor_based_event_replay_properties {
                 let sequence = replay_store.add_event(&subject, payload, timestamp);
                 expected_sequences.push(sequence);
             }
-            
+
             // Replay from the specified sequence
             let replayed_events = replay_store.replay_from_sequence(&tenant_id, start_sequence, None);
-            
+
             // Verify that all returned events have sequence >= start_sequence
             for (_, cursor) in &replayed_events {
-                assert!(cursor.sequence >= start_sequence, 
-                    "Replayed event sequence {} should be >= start sequence {}", 
+                assert!(cursor.sequence >= start_sequence,
+                    "Replayed event sequence {} should be >= start sequence {}",
                     cursor.sequence, start_sequence);
             }
-            
+
             // Verify that sequences are in order
             let mut prev_sequence = 0;
             for (_, cursor) in &replayed_events {
-                assert!(cursor.sequence > prev_sequence, 
-                    "Sequences should be in ascending order: {} should be > {}", 
+                assert!(cursor.sequence > prev_sequence,
+                    "Sequences should be in ascending order: {} should be > {}",
                     cursor.sequence, prev_sequence);
                 prev_sequence = cursor.sequence;
             }
-            
+
             // Verify we got the expected number of events
             let expected_count = expected_sequences.iter().filter(|&&seq| seq >= start_sequence).count();
-            assert_eq!(replayed_events.len(), expected_count, 
+            assert_eq!(replayed_events.len(), expected_count,
                 "Should replay {} events from sequence {}", expected_count, start_sequence);
         }
-        
+
         /// Property: Event replay should respect tenant isolation
         /// For any two different tenants, replay should only return events
         /// belonging to the specified tenant
@@ -1470,34 +1506,34 @@ mod cursor_based_event_replay_properties {
         ) {
             // Ensure we have different tenants
             prop_assume!(tenant_a != tenant_b);
-            
+
             let mut replay_store = MockEventReplayStore::new();
-            
+
             // Add events for both tenants
             let subject_a = format!("events.{}.{}.{}", tenant_a, project_a, topic);
             let subject_b = format!("events.{}.{}.{}", tenant_b, project_b, topic);
-            
+
             let timestamp = Utc::now();
             let seq_a = replay_store.add_event(&subject_a, payload_a.clone(), timestamp);
             let seq_b = replay_store.add_event(&subject_b, payload_b.clone(), timestamp);
-            
+
             // Replay events for tenant A
             let events_a = replay_store.replay_from_sequence(&tenant_a, 1, None);
             let events_b = replay_store.replay_from_sequence(&tenant_b, 1, None);
-            
+
             // Verify tenant isolation
             assert_eq!(events_a.len(), 1, "Tenant A should have exactly one event");
             assert_eq!(events_b.len(), 1, "Tenant B should have exactly one event");
-            
+
             // Verify correct events are returned
             assert_eq!(events_a[0].1.sequence, seq_a, "Tenant A should get its own event");
             assert_eq!(events_b[0].1.sequence, seq_b, "Tenant B should get its own event");
-            
+
             // Verify no cross-contamination
             assert_ne!(events_a[0].1.sequence, seq_b, "Tenant A should not get tenant B's event");
             assert_ne!(events_b[0].1.sequence, seq_a, "Tenant B should not get tenant A's event");
         }
-        
+
         /// Property: Event replay should support timestamp-based cursors
         /// For any tenant and starting timestamp, replay should return all events
         /// with timestamps greater than or equal to the starting timestamp
@@ -1507,11 +1543,11 @@ mod cursor_based_event_replay_properties {
             project_id in project_id_strategy(),
             event_count in 2usize..=5usize
         ) {
-            
+
             let mut replay_store = MockEventReplayStore::new();
             let base_time = Utc::now();
             let mut timestamps = Vec::new();
-            
+
             // Add events with different timestamps
             for i in 0..event_count {
                 let topic = format!("topic_{}", i);
@@ -1521,30 +1557,30 @@ mod cursor_based_event_replay_properties {
                 timestamps.push(timestamp);
                 replay_store.add_event(&subject, payload, timestamp);
             }
-            
+
             // Choose a timestamp in the middle
             let start_timestamp = if timestamps.len() > 1 {
                 timestamps[timestamps.len() / 2]
             } else {
                 timestamps[0]
             };
-            
+
             // Replay from the specified timestamp
             let replayed_events = replay_store.replay_from_timestamp(&tenant_id, start_timestamp, None);
-            
+
             // Verify that all returned events have timestamp >= start_timestamp
             for (_, cursor) in &replayed_events {
-                assert!(cursor.timestamp >= start_timestamp, 
-                    "Replayed event timestamp {:?} should be >= start timestamp {:?}", 
+                assert!(cursor.timestamp >= start_timestamp,
+                    "Replayed event timestamp {:?} should be >= start timestamp {:?}",
                     cursor.timestamp, start_timestamp);
             }
-            
+
             // Verify we got the expected number of events
             let expected_count = timestamps.iter().filter(|&&ts| ts >= start_timestamp).count();
-            assert_eq!(replayed_events.len(), expected_count, 
+            assert_eq!(replayed_events.len(), expected_count,
                 "Should replay {} events from timestamp {:?}", expected_count, start_timestamp);
         }
-        
+
         /// Property: Event replay should support limit parameter
         /// For any replay request with a limit, the number of returned events
         /// should not exceed the specified limit
@@ -1556,9 +1592,9 @@ mod cursor_based_event_replay_properties {
             limit in 1usize..=10usize
         ) {
             prop_assume!(event_count > limit); // Ensure we have more events than the limit
-            
+
             let mut replay_store = MockEventReplayStore::new();
-            
+
             // Add events to the store
             for i in 0..event_count {
                 let topic = format!("topic_{}", i);
@@ -1567,32 +1603,32 @@ mod cursor_based_event_replay_properties {
                 let timestamp = Utc::now();
                 replay_store.add_event(&subject, payload, timestamp);
             }
-            
+
             // Replay with limit
             let replayed_events = replay_store.replay_from_sequence(&tenant_id, 1, Some(limit));
-            
+
             // Verify the limit is respected
-            assert!(replayed_events.len() <= limit, 
-                "Replayed events count {} should not exceed limit {}", 
+            assert!(replayed_events.len() <= limit,
+                "Replayed events count {} should not exceed limit {}",
                 replayed_events.len(), limit);
-            
+
             // If we have enough events, we should get exactly the limit
             let total_events = replay_store.get_events_for_tenant(&tenant_id).len();
             if total_events >= limit {
-                assert_eq!(replayed_events.len(), limit, 
+                assert_eq!(replayed_events.len(), limit,
                     "Should return exactly {} events when limit is set and enough events exist", limit);
             }
-            
+
             // Verify events are still in sequence order
             let mut prev_sequence = 0;
             for (_, cursor) in &replayed_events {
-                assert!(cursor.sequence > prev_sequence, 
-                    "Even with limit, sequences should be in order: {} should be > {}", 
+                assert!(cursor.sequence > prev_sequence,
+                    "Even with limit, sequences should be in order: {} should be > {}",
                     cursor.sequence, prev_sequence);
                 prev_sequence = cursor.sequence;
             }
         }
-        
+
         /// Property: Event replay should handle empty results gracefully
         /// For any replay request that matches no events, the system should
         /// return an empty result set without errors
@@ -1603,9 +1639,9 @@ mod cursor_based_event_replay_properties {
             event_count in 1usize..=5usize,
             high_sequence in 1000u64..=2000u64
         ) {
-            
+
             let mut replay_store = MockEventReplayStore::new();
-            
+
             // Add a few events (sequences will be 1, 2, 3, ...)
             for i in 0..event_count {
                 let topic = format!("topic_{}", i);
@@ -1614,22 +1650,22 @@ mod cursor_based_event_replay_properties {
                 let timestamp = Utc::now();
                 replay_store.add_event(&subject, payload, timestamp);
             }
-            
+
             // Try to replay from a sequence higher than any existing event
             let replayed_events = replay_store.replay_from_sequence(&tenant_id, high_sequence, None);
-            
+
             // Should return empty results
-            assert_eq!(replayed_events.len(), 0, 
+            assert_eq!(replayed_events.len(), 0,
                 "Replay from high sequence {} should return no events", high_sequence);
-            
+
             // Try to replay for a non-existent tenant
             let fake_tenant = format!("{}_nonexistent", tenant_id);
             let empty_results = replay_store.replay_from_sequence(&fake_tenant, 1, None);
-            
-            assert_eq!(empty_results.len(), 0, 
+
+            assert_eq!(empty_results.len(), 0,
                 "Replay for non-existent tenant should return no events");
         }
-        
+
         /// Property: Event replay cursors should be consistent
         /// For any event, the cursor returned should accurately represent
         /// the event's position in the stream
@@ -1639,10 +1675,10 @@ mod cursor_based_event_replay_properties {
             project_id in project_id_strategy(),
             event_count in 3usize..=8usize
         ) {
-            
+
             let mut replay_store = MockEventReplayStore::new();
             let mut expected_cursors = Vec::new();
-            
+
             // Add events and track expected cursors
             for i in 0..event_count {
                 let topic = format!("topic_{}", i);
@@ -1652,33 +1688,33 @@ mod cursor_based_event_replay_properties {
                 let sequence = replay_store.add_event(&subject, payload, timestamp);
                 expected_cursors.push(EventCursor { sequence, timestamp });
             }
-            
+
             // Replay all events
             let replayed_events = replay_store.replay_from_sequence(&tenant_id, 1, None);
-            
+
             // Verify cursor consistency
-            assert_eq!(replayed_events.len(), expected_cursors.len(), 
+            assert_eq!(replayed_events.len(), expected_cursors.len(),
                 "Should replay all events");
-            
+
             for (i, (_, cursor)) in replayed_events.iter().enumerate() {
-                assert_eq!(cursor.sequence, expected_cursors[i].sequence, 
+                assert_eq!(cursor.sequence, expected_cursors[i].sequence,
                     "Cursor sequence should match expected at position {}", i);
-                assert_eq!(cursor.timestamp, expected_cursors[i].timestamp, 
+                assert_eq!(cursor.timestamp, expected_cursors[i].timestamp,
                     "Cursor timestamp should match expected at position {}", i);
             }
-            
+
             // Verify that using a cursor for subsequent replay works correctly
             if replayed_events.len() > 1 {
                 let mid_cursor = &replayed_events[replayed_events.len() / 2].1;
                 let subsequent_events = replay_store.replay_from_sequence(&tenant_id, mid_cursor.sequence, None);
-                
+
                 // Should get events from the cursor position onwards
-                assert!(subsequent_events.len() <= replayed_events.len(), 
+                assert!(subsequent_events.len() <= replayed_events.len(),
                     "Subsequent replay should not return more events than total");
-                
+
                 // First event in subsequent replay should have sequence >= cursor sequence
                 if !subsequent_events.is_empty() {
-                    assert!(subsequent_events[0].1.sequence >= mid_cursor.sequence, 
+                    assert!(subsequent_events[0].1.sequence >= mid_cursor.sequence,
                         "Subsequent replay should start from cursor position");
                 }
             }
@@ -1687,10 +1723,10 @@ mod cursor_based_event_replay_properties {
 }
 
 /// **Feature: realtime-saas-platform, Property 6: WebSocket connection establishment**
-/// 
+///
 /// This property validates that WebSocket connections are properly established with valid authentication.
 /// For any valid authentication credentials, WebSocket connections should be accepted and enable event streaming.
-/// 
+///
 /// **Validates: Requirements 2.1**
 
 #[cfg(test)]
@@ -1699,7 +1735,7 @@ mod websocket_connection_establishment_properties {
     use serde_json::json;
     use std::collections::HashMap;
     use std::sync::{Arc, Mutex};
-    
+
     // Simulate WebSocket connection state
     #[derive(Debug, Clone, PartialEq)]
     enum ConnectionState {
@@ -1709,7 +1745,7 @@ mod websocket_connection_establishment_properties {
         Closed,
         Failed(String),
     }
-    
+
     // Simulate authentication context for WebSocket
     #[derive(Debug, Clone)]
     struct WebSocketAuthContext {
@@ -1719,7 +1755,7 @@ mod websocket_connection_establishment_properties {
         is_valid: bool,
         connection_limit: u32,
     }
-    
+
     // Simulate WebSocket connection
     #[derive(Debug, Clone)]
     struct MockWebSocketConnection {
@@ -1730,14 +1766,14 @@ mod websocket_connection_establishment_properties {
         subscribed_topics: Vec<String>,
         auth_context: Option<WebSocketAuthContext>,
     }
-    
+
     // Simulate WebSocket connection manager
     #[derive(Debug, Clone)]
     struct MockWebSocketManager {
         connections: Arc<Mutex<HashMap<String, MockWebSocketConnection>>>,
         connection_limits: HashMap<String, u32>, // tenant_id -> limit
     }
-    
+
     impl MockWebSocketManager {
         fn new() -> Self {
             Self {
@@ -1745,12 +1781,12 @@ mod websocket_connection_establishment_properties {
                 connection_limits: HashMap::new(),
             }
         }
-        
+
         fn with_connection_limit(mut self, tenant_id: String, limit: u32) -> Self {
             self.connection_limits.insert(tenant_id, limit);
             self
         }
-        
+
         fn establish_connection(
             &self,
             connection_id: String,
@@ -1760,22 +1796,30 @@ mod websocket_connection_establishment_properties {
             if !auth_context.is_valid {
                 return Err("Invalid authentication credentials".to_string());
             }
-            
+
             // Check if tenant has subscribe permissions
-            if !auth_context.scopes.contains(&"events:subscribe".to_string()) {
+            if !auth_context
+                .scopes
+                .contains(&"events:subscribe".to_string())
+            {
                 return Err("Insufficient permissions for WebSocket connection".to_string());
             }
-            
+
             // Check connection limits
             let current_connections = self.get_tenant_connection_count(&auth_context.tenant_id);
-            let limit = self.connection_limits.get(&auth_context.tenant_id)
+            let limit = self
+                .connection_limits
+                .get(&auth_context.tenant_id)
                 .copied()
                 .unwrap_or(auth_context.connection_limit);
-            
+
             if current_connections >= limit {
-                return Err(format!("Connection limit exceeded: {}/{}", current_connections, limit));
+                return Err(format!(
+                    "Connection limit exceeded: {}/{}",
+                    current_connections, limit
+                ));
             }
-            
+
             // Create the connection
             let connection = MockWebSocketConnection {
                 id: connection_id.clone(),
@@ -1785,26 +1829,29 @@ mod websocket_connection_establishment_properties {
                 subscribed_topics: Vec::new(),
                 auth_context: Some(auth_context),
             };
-            
+
             // Store the connection
             let mut connections = self.connections.lock().unwrap();
             connections.insert(connection_id.clone(), connection);
-            
+
             Ok(connection_id)
         }
-        
+
         fn get_connection(&self, connection_id: &str) -> Option<MockWebSocketConnection> {
             let connections = self.connections.lock().unwrap();
             connections.get(connection_id).cloned()
         }
-        
+
         fn get_tenant_connection_count(&self, tenant_id: &str) -> u32 {
             let connections = self.connections.lock().unwrap();
-            connections.values()
-                .filter(|conn| conn.tenant_id == tenant_id && conn.state == ConnectionState::Authenticated)
+            connections
+                .values()
+                .filter(|conn| {
+                    conn.tenant_id == tenant_id && conn.state == ConnectionState::Authenticated
+                })
                 .count() as u32
         }
-        
+
         fn close_connection(&self, connection_id: &str) -> Result<(), String> {
             let mut connections = self.connections.lock().unwrap();
             if let Some(connection) = connections.get_mut(connection_id) {
@@ -1814,8 +1861,12 @@ mod websocket_connection_establishment_properties {
                 Err("Connection not found".to_string())
             }
         }
-        
-        fn subscribe_to_topics(&self, connection_id: &str, topics: Vec<String>) -> Result<(), String> {
+
+        fn subscribe_to_topics(
+            &self,
+            connection_id: &str,
+            topics: Vec<String>,
+        ) -> Result<(), String> {
             let mut connections = self.connections.lock().unwrap();
             if let Some(connection) = connections.get_mut(connection_id) {
                 if connection.state != ConnectionState::Authenticated {
@@ -1827,30 +1878,33 @@ mod websocket_connection_establishment_properties {
                 Err("Connection not found".to_string())
             }
         }
-        
+
         fn get_active_connections(&self) -> Vec<MockWebSocketConnection> {
             let connections = self.connections.lock().unwrap();
-            connections.values()
+            connections
+                .values()
                 .filter(|conn| conn.state == ConnectionState::Authenticated)
                 .cloned()
                 .collect()
         }
-        
+
         fn terminate_tenant_connections(&self, tenant_id: &str) -> usize {
             let mut connections = self.connections.lock().unwrap();
             let mut terminated_count = 0;
-            
+
             for connection in connections.values_mut() {
-                if connection.tenant_id == tenant_id && connection.state == ConnectionState::Authenticated {
+                if connection.tenant_id == tenant_id
+                    && connection.state == ConnectionState::Authenticated
+                {
                     connection.state = ConnectionState::Closed;
                     terminated_count += 1;
                 }
             }
-            
+
             terminated_count
         }
     }
-    
+
     // Generate valid authentication contexts for WebSocket
     fn valid_websocket_auth_strategy() -> impl Strategy<Value = WebSocketAuthContext> {
         (
@@ -1864,24 +1918,25 @@ mod websocket_connection_establishment_properties {
                     Just("events:publish".to_string()),
                     Just("admin:read".to_string()),
                 ],
-                1..=3
+                1..=3,
             ),
             1u32..=1000u32, // connection_limit
-        ).prop_map(|(tenant_id, project_id, mut scopes, connection_limit)| {
-            // Ensure events:subscribe is always included for valid WebSocket auth
-            if !scopes.contains(&"events:subscribe".to_string()) {
-                scopes.push("events:subscribe".to_string());
-            }
-            WebSocketAuthContext {
-                tenant_id,
-                project_id,
-                scopes,
-                is_valid: true,
-                connection_limit,
-            }
-        })
+        )
+            .prop_map(|(tenant_id, project_id, mut scopes, connection_limit)| {
+                // Ensure events:subscribe is always included for valid WebSocket auth
+                if !scopes.contains(&"events:subscribe".to_string()) {
+                    scopes.push("events:subscribe".to_string());
+                }
+                WebSocketAuthContext {
+                    tenant_id,
+                    project_id,
+                    scopes,
+                    is_valid: true,
+                    connection_limit,
+                }
+            })
     }
-    
+
     // Generate invalid authentication contexts for WebSocket
     fn invalid_websocket_auth_strategy() -> impl Strategy<Value = WebSocketAuthContext> {
         (
@@ -1895,27 +1950,33 @@ mod websocket_connection_establishment_properties {
                     Just("admin:read".to_string()),
                     Just("billing:read".to_string()),
                 ],
-                0..=2
+                0..=2,
             ),
             prop::bool::ANY,
             1u32..=1000u32, // connection_limit
-        ).prop_map(|(tenant_id, project_id, scopes, is_valid, connection_limit)| {
-            WebSocketAuthContext {
-                tenant_id,
-                project_id,
-                scopes: scopes.into_iter().filter(|s| s != "events:subscribe").collect(), // Remove subscribe scope
-                is_valid: is_valid && rand::random::<bool>(), // Sometimes invalid
-                connection_limit,
-            }
-        })
+        )
+            .prop_map(
+                |(tenant_id, project_id, scopes, is_valid, connection_limit)| {
+                    WebSocketAuthContext {
+                        tenant_id,
+                        project_id,
+                        scopes: scopes
+                            .into_iter()
+                            .filter(|s| s != "events:subscribe")
+                            .collect(), // Remove subscribe scope
+                        is_valid: is_valid && rand::random::<bool>(), // Sometimes invalid
+                        connection_limit,
+                    }
+                },
+            )
     }
-    
+
     // Generate connection IDs
     fn connection_id_strategy() -> impl Strategy<Value = String> {
         prop::collection::vec(prop::char::range('a', 'z'), 16..32)
             .prop_map(|chars| format!("ws_{}", chars.into_iter().collect::<String>()))
     }
-    
+
     proptest! {
         /// Property: Valid authentication should allow WebSocket connection establishment
         /// For any valid authentication credentials, WebSocket connections should be
@@ -1927,34 +1988,34 @@ mod websocket_connection_establishment_properties {
         ) {
             let manager = MockWebSocketManager::new()
                 .with_connection_limit(auth.tenant_id.clone(), auth.connection_limit);
-            
+
             let result = manager.establish_connection(connection_id.clone(), auth.clone());
-            
+
             // Should succeed with valid authentication
-            assert!(result.is_ok(), 
+            assert!(result.is_ok(),
                 "WebSocket connection should be established with valid auth: {:?}", result);
-            
+
             // Should return the connection ID
             if let Ok(returned_id) = result {
                 assert_eq!(returned_id, connection_id, "Should return the correct connection ID");
             }
-            
+
             // Connection should be stored and authenticated
             let connection = manager.get_connection(&connection_id)
                 .expect("Connection should be stored");
-            
-            assert_eq!(connection.state, ConnectionState::Authenticated, 
+
+            assert_eq!(connection.state, ConnectionState::Authenticated,
                 "Connection should be in authenticated state");
-            assert_eq!(connection.tenant_id, auth.tenant_id, 
+            assert_eq!(connection.tenant_id, auth.tenant_id,
                 "Connection should be scoped to correct tenant");
-            assert_eq!(connection.project_id, auth.project_id, 
+            assert_eq!(connection.project_id, auth.project_id,
                 "Connection should be scoped to correct project");
-            
+
             // Should be counted as an active connection
-            assert_eq!(manager.get_tenant_connection_count(&auth.tenant_id), 1, 
+            assert_eq!(manager.get_tenant_connection_count(&auth.tenant_id), 1,
                 "Should count as one active connection for the tenant");
         }
-        
+
         /// Property: Invalid authentication should reject WebSocket connections
         /// For any invalid authentication credentials, WebSocket connection attempts
         /// should be rejected with appropriate error messages
@@ -1965,34 +2026,34 @@ mod websocket_connection_establishment_properties {
         ) {
             let manager = MockWebSocketManager::new()
                 .with_connection_limit(auth.tenant_id.clone(), auth.connection_limit);
-            
+
             let result = manager.establish_connection(connection_id.clone(), auth.clone());
-            
+
             // Should fail with invalid authentication
-            assert!(result.is_err(), 
+            assert!(result.is_err(),
                 "WebSocket connection should be rejected with invalid auth");
-            
+
             // Error message should be descriptive
             if let Err(error_msg) = result {
                 assert!(!error_msg.is_empty(), "Error message should not be empty");
                 assert!(
-                    error_msg.contains("authentication") || 
+                    error_msg.contains("authentication") ||
                     error_msg.contains("permission") ||
                     error_msg.contains("Invalid") ||
                     error_msg.contains("Insufficient"),
                     "Error message should indicate auth/permission issue: {}", error_msg
                 );
             }
-            
+
             // Connection should not be stored
             let connection = manager.get_connection(&connection_id);
             assert!(connection.is_none(), "Failed connection should not be stored");
-            
+
             // Should not count as an active connection
-            assert_eq!(manager.get_tenant_connection_count(&auth.tenant_id), 0, 
+            assert_eq!(manager.get_tenant_connection_count(&auth.tenant_id), 0,
                 "Failed connection should not count as active");
         }
-        
+
         /// Property: WebSocket connections should enforce connection limits
         /// For any tenant with connection limits, the system should reject connections
         /// that would exceed the configured limit
@@ -2004,47 +2065,47 @@ mod websocket_connection_establishment_properties {
         ) {
             let manager = MockWebSocketManager::new()
                 .with_connection_limit(auth.tenant_id.clone(), connection_limit);
-            
+
             let mut successful_connections = 0;
             let mut connection_ids = Vec::new();
-            
+
             // Try to establish connections up to and beyond the limit
             let total_attempts = connection_limit as usize + extra_connections;
-            
+
             for i in 0..total_attempts {
                 let connection_id = format!("ws_conn_{}", i);
                 let result = manager.establish_connection(connection_id.clone(), auth.clone());
-                
+
                 if result.is_ok() {
                     successful_connections += 1;
                     connection_ids.push(connection_id);
                 }
             }
-            
+
             // Should not exceed the connection limit
-            assert!(successful_connections <= connection_limit, 
-                "Successful connections ({}) should not exceed limit ({})", 
+            assert!(successful_connections <= connection_limit,
+                "Successful connections ({}) should not exceed limit ({})",
                 successful_connections, connection_limit);
-            
+
             // Should have exactly the limit number of connections (or fewer if limit is 0)
-            assert_eq!(successful_connections, connection_limit, 
+            assert_eq!(successful_connections, connection_limit,
                 "Should establish exactly the limit number of connections");
-            
+
             // Verify the connection count matches
-            assert_eq!(manager.get_tenant_connection_count(&auth.tenant_id), connection_limit, 
+            assert_eq!(manager.get_tenant_connection_count(&auth.tenant_id), connection_limit,
                 "Active connection count should match the limit");
-            
+
             // Try one more connection - should fail
             let extra_connection_id = format!("ws_extra_{}", total_attempts);
             let extra_result = manager.establish_connection(extra_connection_id, auth.clone());
-            
+
             assert!(extra_result.is_err(), "Connection beyond limit should be rejected");
             if let Err(error_msg) = extra_result {
-                assert!(error_msg.contains("limit"), 
+                assert!(error_msg.contains("limit"),
                     "Error should mention connection limit: {}", error_msg);
             }
         }
-        
+
         /// Property: WebSocket connections should support topic subscriptions
         /// For any authenticated WebSocket connection, the system should allow
         /// subscription to topics for event streaming
@@ -2065,30 +2126,30 @@ mod websocket_connection_establishment_properties {
         ) {
             let manager = MockWebSocketManager::new()
                 .with_connection_limit(auth.tenant_id.clone(), auth.connection_limit);
-            
+
             // Establish connection first
             let connection_result = manager.establish_connection(connection_id.clone(), auth.clone());
             assert!(connection_result.is_ok(), "Connection should be established");
-            
+
             // Subscribe to topics
             let subscription_result = manager.subscribe_to_topics(&connection_id, topics.clone());
-            
+
             // Should succeed
-            assert!(subscription_result.is_ok(), 
+            assert!(subscription_result.is_ok(),
                 "Topic subscription should succeed: {:?}", subscription_result);
-            
+
             // Verify subscription was stored
             let connection = manager.get_connection(&connection_id)
                 .expect("Connection should exist");
-            
-            assert_eq!(connection.subscribed_topics, topics, 
+
+            assert_eq!(connection.subscribed_topics, topics,
                 "Connection should have the subscribed topics");
-            
+
             // Verify connection is still authenticated
-            assert_eq!(connection.state, ConnectionState::Authenticated, 
+            assert_eq!(connection.state, ConnectionState::Authenticated,
                 "Connection should remain authenticated after subscription");
         }
-        
+
         /// Property: WebSocket connection closure should clean up resources
         /// For any established WebSocket connection, closing the connection should
         /// properly clean up resources and update connection counts
@@ -2099,35 +2160,35 @@ mod websocket_connection_establishment_properties {
         ) {
             let manager = MockWebSocketManager::new()
                 .with_connection_limit(auth.tenant_id.clone(), auth.connection_limit);
-            
+
             // Establish connection
             let connection_result = manager.establish_connection(connection_id.clone(), auth.clone());
             assert!(connection_result.is_ok(), "Connection should be established");
-            
+
             // Verify connection is active
-            assert_eq!(manager.get_tenant_connection_count(&auth.tenant_id), 1, 
+            assert_eq!(manager.get_tenant_connection_count(&auth.tenant_id), 1,
                 "Should have one active connection");
-            
+
             // Close the connection
             let close_result = manager.close_connection(&connection_id);
             assert!(close_result.is_ok(), "Connection closure should succeed");
-            
+
             // Verify connection state is updated
             let connection = manager.get_connection(&connection_id)
                 .expect("Connection should still exist");
-            assert_eq!(connection.state, ConnectionState::Closed, 
+            assert_eq!(connection.state, ConnectionState::Closed,
                 "Connection should be in closed state");
-            
+
             // Verify connection count is updated
-            assert_eq!(manager.get_tenant_connection_count(&auth.tenant_id), 0, 
+            assert_eq!(manager.get_tenant_connection_count(&auth.tenant_id), 0,
                 "Should have no active connections after closure");
-            
+
             // Verify connection is not in active connections list
             let active_connections = manager.get_active_connections();
-            assert!(!active_connections.iter().any(|conn| conn.id == connection_id), 
+            assert!(!active_connections.iter().any(|conn| conn.id == connection_id),
                 "Closed connection should not be in active connections list");
         }
-        
+
         /// Property: WebSocket connections should be isolated per tenant
         /// For any connections from different tenants, they should be completely
         /// isolated and not interfere with each other
@@ -2141,56 +2202,56 @@ mod websocket_connection_establishment_properties {
             // Ensure we have different tenants and connection IDs
             prop_assume!(auth_a.tenant_id != auth_b.tenant_id);
             prop_assume!(connection_id_a != connection_id_b);
-            
+
             let manager = MockWebSocketManager::new()
                 .with_connection_limit(auth_a.tenant_id.clone(), auth_a.connection_limit)
                 .with_connection_limit(auth_b.tenant_id.clone(), auth_b.connection_limit);
-            
+
             // Establish connections for both tenants
             let result_a = manager.establish_connection(connection_id_a.clone(), auth_a.clone());
             let result_b = manager.establish_connection(connection_id_b.clone(), auth_b.clone());
-            
+
             // Both should succeed
             assert!(result_a.is_ok(), "Connection A should be established");
             assert!(result_b.is_ok(), "Connection B should be established");
-            
+
             // Verify tenant isolation in connection counts
-            assert_eq!(manager.get_tenant_connection_count(&auth_a.tenant_id), 1, 
+            assert_eq!(manager.get_tenant_connection_count(&auth_a.tenant_id), 1,
                 "Tenant A should have one connection");
-            assert_eq!(manager.get_tenant_connection_count(&auth_b.tenant_id), 1, 
+            assert_eq!(manager.get_tenant_connection_count(&auth_b.tenant_id), 1,
                 "Tenant B should have one connection");
-            
+
             // Verify connections are scoped to correct tenants
             let connection_a = manager.get_connection(&connection_id_a).unwrap();
             let connection_b = manager.get_connection(&connection_id_b).unwrap();
-            
-            assert_eq!(connection_a.tenant_id, auth_a.tenant_id, 
+
+            assert_eq!(connection_a.tenant_id, auth_a.tenant_id,
                 "Connection A should belong to tenant A");
-            assert_eq!(connection_b.tenant_id, auth_b.tenant_id, 
+            assert_eq!(connection_b.tenant_id, auth_b.tenant_id,
                 "Connection B should belong to tenant B");
-            
+
             // Verify no cross-tenant interference
-            assert_ne!(connection_a.tenant_id, connection_b.tenant_id, 
+            assert_ne!(connection_a.tenant_id, connection_b.tenant_id,
                 "Connections should belong to different tenants");
-            
+
             // Closing one connection should not affect the other
             let close_result = manager.close_connection(&connection_id_a);
             assert!(close_result.is_ok(), "Connection A closure should succeed");
-            
-            assert_eq!(manager.get_tenant_connection_count(&auth_a.tenant_id), 0, 
+
+            assert_eq!(manager.get_tenant_connection_count(&auth_a.tenant_id), 0,
                 "Tenant A should have no active connections");
-            assert_eq!(manager.get_tenant_connection_count(&auth_b.tenant_id), 1, 
+            assert_eq!(manager.get_tenant_connection_count(&auth_b.tenant_id), 1,
                 "Tenant B should still have one active connection");
         }
     }
 }
 
 /// **Feature: realtime-saas-platform, Property 7: Real-time event delivery**
-/// 
+///
 /// This property validates that events are delivered in real-time to all connected WebSocket clients.
-/// For any event published to subscribed topics, all connected WebSocket clients should receive 
+/// For any event published to subscribed topics, all connected WebSocket clients should receive
 /// the event in real-time.
-/// 
+///
 /// **Validates: Requirements 2.2**
 
 #[cfg(test)]
@@ -2199,7 +2260,7 @@ mod realtime_event_delivery_properties {
     use serde_json::{json, Value};
     use std::collections::HashMap;
     use std::sync::{Arc, Mutex};
-    
+
     // Simulate WebSocket connection for event delivery
     #[derive(Debug, Clone)]
     struct MockWebSocketConnection {
@@ -2209,7 +2270,7 @@ mod realtime_event_delivery_properties {
         subscribed_topics: Vec<String>,
         received_events: Arc<Mutex<Vec<Value>>>,
     }
-    
+
     impl MockWebSocketConnection {
         fn new(id: String, tenant_id: String, project_id: String) -> Self {
             Self {
@@ -2220,51 +2281,59 @@ mod realtime_event_delivery_properties {
                 received_events: Arc::new(Mutex::new(Vec::new())),
             }
         }
-        
+
         fn subscribe_to_topics(&mut self, topics: Vec<String>) {
             self.subscribed_topics = topics;
         }
-        
+
         fn deliver_event(&self, event: Value) {
             let mut events = self.received_events.lock().unwrap();
             events.push(event);
         }
-        
+
         fn get_received_events(&self) -> Vec<Value> {
             self.received_events.lock().unwrap().clone()
         }
-        
+
         fn received_event_count(&self) -> usize {
             self.received_events.lock().unwrap().len()
         }
-        
+
         fn is_subscribed_to(&self, topic: &str) -> bool {
-            self.subscribed_topics.iter().any(|t| t == topic || topic.starts_with(&format!("{}.", t)))
+            self.subscribed_topics
+                .iter()
+                .any(|t| t == topic || topic.starts_with(&format!("{}.", t)))
         }
     }
-    
+
     // Simulate event delivery system
     #[derive(Debug, Clone)]
     struct MockEventDeliverySystem {
         connections: Arc<Mutex<HashMap<String, MockWebSocketConnection>>>,
     }
-    
+
     impl MockEventDeliverySystem {
         fn new() -> Self {
             Self {
                 connections: Arc::new(Mutex::new(HashMap::new())),
             }
         }
-        
+
         fn add_connection(&self, connection: MockWebSocketConnection) {
             let mut connections = self.connections.lock().unwrap();
             connections.insert(connection.id.clone(), connection);
         }
-        
-        fn publish_event(&self, tenant_id: &str, project_id: &str, topic: &str, payload: Value) -> usize {
+
+        fn publish_event(
+            &self,
+            tenant_id: &str,
+            project_id: &str,
+            topic: &str,
+            payload: Value,
+        ) -> usize {
             let connections = self.connections.lock().unwrap();
             let mut delivered_count = 0;
-            
+
             // Create the event with metadata
             let event = json!({
                 "id": uuid::Uuid::new_v4().to_string(),
@@ -2274,7 +2343,7 @@ mod realtime_event_delivery_properties {
                 "payload": payload,
                 "published_at": chrono::Utc::now().to_rfc3339()
             });
-            
+
             // Deliver to all subscribed connections
             for connection in connections.values() {
                 // Check tenant/project isolation
@@ -2286,47 +2355,48 @@ mod realtime_event_delivery_properties {
                     }
                 }
             }
-            
+
             delivered_count
         }
-        
+
         fn get_connection(&self, connection_id: &str) -> Option<MockWebSocketConnection> {
             let connections = self.connections.lock().unwrap();
             connections.get(connection_id).cloned()
         }
-        
+
         fn get_connections_for_tenant(&self, tenant_id: &str) -> Vec<MockWebSocketConnection> {
             let connections = self.connections.lock().unwrap();
-            connections.values()
+            connections
+                .values()
                 .filter(|conn| conn.tenant_id == tenant_id)
                 .cloned()
                 .collect()
         }
-        
+
         fn connection_count(&self) -> usize {
             let connections = self.connections.lock().unwrap();
             connections.len()
         }
     }
-    
+
     // Generate tenant IDs for testing
     fn tenant_id_strategy() -> impl Strategy<Value = String> {
         prop::collection::vec(prop::char::range('a', 'z'), 8..20)
             .prop_map(|chars| format!("tenant_{}", chars.into_iter().collect::<String>()))
     }
-    
+
     // Generate project IDs for testing
     fn project_id_strategy() -> impl Strategy<Value = String> {
         prop::collection::vec(prop::char::range('a', 'z'), 8..20)
             .prop_map(|chars| format!("project_{}", chars.into_iter().collect::<String>()))
     }
-    
+
     // Generate connection IDs
     fn connection_id_strategy() -> impl Strategy<Value = String> {
         prop::collection::vec(prop::char::range('a', 'z'), 16..32)
             .prop_map(|chars| format!("ws_{}", chars.into_iter().collect::<String>()))
     }
-    
+
     // Generate topic names
     fn topic_strategy() -> impl Strategy<Value = String> {
         prop_oneof![
@@ -2339,7 +2409,7 @@ mod realtime_event_delivery_properties {
             Just("notification.sent".to_string()),
         ]
     }
-    
+
     // Generate event payloads
     fn event_payload_strategy() -> impl Strategy<Value = Value> {
         prop_oneof![
@@ -2349,7 +2419,7 @@ mod realtime_event_delivery_properties {
             Just(json!({"type": "payment", "transaction_id": "txn_789", "status": "completed"})),
         ]
     }
-    
+
     proptest! {
         /// Property: Events should be delivered to all subscribed WebSocket connections
         /// For any event published to a topic, all WebSocket connections subscribed to
@@ -2363,7 +2433,7 @@ mod realtime_event_delivery_properties {
             subscriber_count in 1usize..=5usize
         ) {
             let delivery_system = MockEventDeliverySystem::new();
-            
+
             // Create multiple subscribers for the same topic
             let mut connection_ids = Vec::new();
             for i in 0..subscriber_count {
@@ -2377,7 +2447,7 @@ mod realtime_event_delivery_properties {
                 delivery_system.add_connection(connection);
                 connection_ids.push(connection_id);
             }
-            
+
             // Publish an event
             let delivered_count = delivery_system.publish_event(
                 &tenant_id,
@@ -2385,34 +2455,34 @@ mod realtime_event_delivery_properties {
                 &topic,
                 payload.clone(),
             );
-            
+
             // Should deliver to all subscribers
-            assert_eq!(delivered_count, subscriber_count, 
+            assert_eq!(delivered_count, subscriber_count,
                 "Event should be delivered to all {} subscribers", subscriber_count);
-            
+
             // Verify each subscriber received the event
             for connection_id in &connection_ids {
                 let connection = delivery_system.get_connection(connection_id)
                     .expect("Connection should exist");
-                
-                assert_eq!(connection.received_event_count(), 1, 
+
+                assert_eq!(connection.received_event_count(), 1,
                     "Connection {} should have received exactly one event", connection_id);
-                
+
                 let received_events = connection.get_received_events();
                 let received_event = &received_events[0];
-                
+
                 // Verify event content
-                assert_eq!(received_event["tenant_id"], tenant_id, 
+                assert_eq!(received_event["tenant_id"], tenant_id,
                     "Event should have correct tenant_id");
-                assert_eq!(received_event["project_id"], project_id, 
+                assert_eq!(received_event["project_id"], project_id,
                     "Event should have correct project_id");
-                assert_eq!(received_event["topic"], topic, 
+                assert_eq!(received_event["topic"], topic,
                     "Event should have correct topic");
-                assert_eq!(received_event["payload"], payload, 
+                assert_eq!(received_event["payload"], payload,
                     "Event should have correct payload");
             }
         }
-        
+
         /// Property: Events should only be delivered to connections subscribed to the topic
         /// For any event published to a specific topic, only connections subscribed to
         /// that topic should receive the event, not connections subscribed to other topics
@@ -2426,9 +2496,9 @@ mod realtime_event_delivery_properties {
         ) {
             // Ensure we have different topics
             prop_assume!(subscribed_topic != unsubscribed_topic);
-            
+
             let delivery_system = MockEventDeliverySystem::new();
-            
+
             // Create a connection subscribed to one topic
             let subscribed_conn_id = "ws_subscribed";
             let mut subscribed_connection = MockWebSocketConnection::new(
@@ -2438,7 +2508,7 @@ mod realtime_event_delivery_properties {
             );
             subscribed_connection.subscribe_to_topics(vec![subscribed_topic.clone()]);
             delivery_system.add_connection(subscribed_connection);
-            
+
             // Create a connection subscribed to a different topic
             let unsubscribed_conn_id = "ws_unsubscribed";
             let mut unsubscribed_connection = MockWebSocketConnection::new(
@@ -2448,7 +2518,7 @@ mod realtime_event_delivery_properties {
             );
             unsubscribed_connection.subscribe_to_topics(vec![unsubscribed_topic.clone()]);
             delivery_system.add_connection(unsubscribed_connection);
-            
+
             // Publish event to the subscribed topic
             let delivered_count = delivery_system.publish_event(
                 &tenant_id,
@@ -2456,24 +2526,24 @@ mod realtime_event_delivery_properties {
                 &subscribed_topic,
                 payload.clone(),
             );
-            
+
             // Should deliver to exactly one connection (the subscribed one)
-            assert_eq!(delivered_count, 1, 
+            assert_eq!(delivered_count, 1,
                 "Event should be delivered to exactly one subscriber");
-            
+
             // Verify subscribed connection received the event
             let subscribed_conn = delivery_system.get_connection(subscribed_conn_id)
                 .expect("Subscribed connection should exist");
-            assert_eq!(subscribed_conn.received_event_count(), 1, 
+            assert_eq!(subscribed_conn.received_event_count(), 1,
                 "Subscribed connection should have received the event");
-            
+
             // Verify unsubscribed connection did NOT receive the event
             let unsubscribed_conn = delivery_system.get_connection(unsubscribed_conn_id)
                 .expect("Unsubscribed connection should exist");
-            assert_eq!(unsubscribed_conn.received_event_count(), 0, 
+            assert_eq!(unsubscribed_conn.received_event_count(), 0,
                 "Unsubscribed connection should NOT have received the event");
         }
-        
+
         /// Property: Events should respect tenant isolation in delivery
         /// For any event published to a tenant, only connections from that tenant
         /// should receive the event, not connections from other tenants
@@ -2488,9 +2558,9 @@ mod realtime_event_delivery_properties {
         ) {
             // Ensure we have different tenants
             prop_assume!(tenant_a != tenant_b);
-            
+
             let delivery_system = MockEventDeliverySystem::new();
-            
+
             // Create connection for tenant A
             let conn_a_id = "ws_tenant_a";
             let mut connection_a = MockWebSocketConnection::new(
@@ -2500,7 +2570,7 @@ mod realtime_event_delivery_properties {
             );
             connection_a.subscribe_to_topics(vec![topic.clone()]);
             delivery_system.add_connection(connection_a);
-            
+
             // Create connection for tenant B (subscribed to same topic)
             let conn_b_id = "ws_tenant_b";
             let mut connection_b = MockWebSocketConnection::new(
@@ -2510,7 +2580,7 @@ mod realtime_event_delivery_properties {
             );
             connection_b.subscribe_to_topics(vec![topic.clone()]);
             delivery_system.add_connection(connection_b);
-            
+
             // Publish event for tenant A
             let delivered_count = delivery_system.publish_event(
                 &tenant_a,
@@ -2518,24 +2588,24 @@ mod realtime_event_delivery_properties {
                 &topic,
                 payload.clone(),
             );
-            
+
             // Should deliver to exactly one connection (tenant A's connection)
-            assert_eq!(delivered_count, 1, 
+            assert_eq!(delivered_count, 1,
                 "Event should be delivered to exactly one tenant");
-            
+
             // Verify tenant A's connection received the event
             let conn_a = delivery_system.get_connection(conn_a_id)
                 .expect("Tenant A connection should exist");
-            assert_eq!(conn_a.received_event_count(), 1, 
+            assert_eq!(conn_a.received_event_count(), 1,
                 "Tenant A connection should have received the event");
-            
+
             // Verify tenant B's connection did NOT receive the event
             let conn_b = delivery_system.get_connection(conn_b_id)
                 .expect("Tenant B connection should exist");
-            assert_eq!(conn_b.received_event_count(), 0, 
+            assert_eq!(conn_b.received_event_count(), 0,
                 "Tenant B connection should NOT have received the event (tenant isolation)");
         }
-        
+
         /// Property: Multiple events should be delivered in order to subscribers
         /// For any sequence of events published to a topic, all events should be
         /// delivered to subscribers in the order they were published
@@ -2548,9 +2618,9 @@ mod realtime_event_delivery_properties {
             payloads in prop::collection::vec(event_payload_strategy(), 2..=5)
         ) {
             let count = event_count.min(payloads.len());
-            
+
             let delivery_system = MockEventDeliverySystem::new();
-            
+
             // Create a subscriber
             let connection_id = "ws_subscriber";
             let mut connection = MockWebSocketConnection::new(
@@ -2560,7 +2630,7 @@ mod realtime_event_delivery_properties {
             );
             connection.subscribe_to_topics(vec![topic.clone()]);
             delivery_system.add_connection(connection);
-            
+
             // Publish multiple events
             let mut expected_payloads = Vec::new();
             for payload in payloads.iter().take(count) {
@@ -2572,22 +2642,22 @@ mod realtime_event_delivery_properties {
                 );
                 expected_payloads.push(payload.clone());
             }
-            
+
             // Verify all events were received
             let connection = delivery_system.get_connection(connection_id)
                 .expect("Connection should exist");
-            
-            assert_eq!(connection.received_event_count(), count, 
+
+            assert_eq!(connection.received_event_count(), count,
                 "Connection should have received all {} events", count);
-            
+
             // Verify events were received in order
             let received_events = connection.get_received_events();
             for (i, expected_payload) in expected_payloads.iter().enumerate() {
-                assert_eq!(received_events[i]["payload"], *expected_payload, 
+                assert_eq!(received_events[i]["payload"], *expected_payload,
                     "Event {} should have correct payload in order", i);
             }
         }
-        
+
         /// Property: Events should be delivered to multiple topics if subscribed
         /// For any connection subscribed to multiple topics, events from any of
         /// those topics should be delivered to the connection
@@ -2603,13 +2673,13 @@ mod realtime_event_delivery_properties {
                 .collect::<std::collections::HashSet<_>>()
                 .into_iter()
                 .collect();
-            
+
             prop_assume!(unique_topics.len() >= 2);
-            
+
             let count = unique_topics.len().min(payloads.len());
-            
+
             let delivery_system = MockEventDeliverySystem::new();
-            
+
             // Create a connection subscribed to multiple topics
             let connection_id = "ws_multi_subscriber";
             let mut connection = MockWebSocketConnection::new(
@@ -2619,7 +2689,7 @@ mod realtime_event_delivery_properties {
             );
             connection.subscribe_to_topics(unique_topics.clone());
             delivery_system.add_connection(connection);
-            
+
             // Publish events to different topics
             for (topic, payload) in unique_topics.iter().take(count).zip(payloads.iter().take(count)) {
                 delivery_system.publish_event(
@@ -2629,22 +2699,22 @@ mod realtime_event_delivery_properties {
                     payload.clone(),
                 );
             }
-            
+
             // Verify all events were received
             let connection = delivery_system.get_connection(connection_id)
                 .expect("Connection should exist");
-            
-            assert_eq!(connection.received_event_count(), count, 
+
+            assert_eq!(connection.received_event_count(), count,
                 "Connection should have received events from all {} subscribed topics", count);
-            
+
             // Verify events from different topics were all delivered
             let received_events = connection.get_received_events();
             for (i, topic) in unique_topics.iter().take(count).enumerate() {
-                assert_eq!(received_events[i]["topic"], *topic, 
+                assert_eq!(received_events[i]["topic"], *topic,
                     "Event {} should be from topic {}", i, topic);
             }
         }
-        
+
         /// Property: Event delivery should be consistent across multiple publishes
         /// For any event published multiple times, each publish should result in
         /// delivery to all subscribed connections
@@ -2657,7 +2727,7 @@ mod realtime_event_delivery_properties {
             publish_count in 2usize..=5usize
         ) {
             let delivery_system = MockEventDeliverySystem::new();
-            
+
             // Create a subscriber
             let connection_id = "ws_subscriber";
             let mut connection = MockWebSocketConnection::new(
@@ -2667,7 +2737,7 @@ mod realtime_event_delivery_properties {
             );
             connection.subscribe_to_topics(vec![topic.clone()]);
             delivery_system.add_connection(connection);
-            
+
             // Publish the same event multiple times
             for _ in 0..publish_count {
                 let delivered_count = delivery_system.publish_event(
@@ -2676,23 +2746,23 @@ mod realtime_event_delivery_properties {
                     &topic,
                     payload.clone(),
                 );
-                
+
                 // Each publish should deliver to exactly one subscriber
-                assert_eq!(delivered_count, 1, 
+                assert_eq!(delivered_count, 1,
                     "Each publish should deliver to the subscriber");
             }
-            
+
             // Verify all publishes were received
             let connection = delivery_system.get_connection(connection_id)
                 .expect("Connection should exist");
-            
-            assert_eq!(connection.received_event_count(), publish_count, 
+
+            assert_eq!(connection.received_event_count(), publish_count,
                 "Connection should have received all {} published events", publish_count);
-            
+
             // Verify all received events have the same payload
             let received_events = connection.get_received_events();
             for (i, event) in received_events.iter().enumerate() {
-                assert_eq!(event["payload"], payload, 
+                assert_eq!(event["payload"], payload,
                     "Event {} should have the same payload", i);
             }
         }
