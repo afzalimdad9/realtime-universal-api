@@ -32,7 +32,7 @@ thiserror = "1.0"
 
 # Authentication and security
 jsonwebtoken = "9.0"
-bcrypt = "0.15"
+bcrypt = "0.17"
 rand = "0.8"
 sha2 = "0.10"
 
