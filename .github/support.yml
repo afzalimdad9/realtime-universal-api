@@ -1,0 +1,25 @@
+# Configuration for Support Requests
+# https://github.com/dessant/support-requests
+
+# Label used to mark issues as support requests
+supportLabel: support
+
+# Comment to post on issues marked as support requests, `{issue-author}` is an
+# optional placeholder. Set to `false` to disable
+supportComment: >
+  👋 @{issue-author}, we use the issue tracker exclusively for bug reports and feature requests.
+
+  This issue appears to be a support request. Please use one of the following channels for support:
+
+  - 📖 Check our [documentation](../README.md)
+  - 💬 Join our community discussions
+  - 📧 Contact us via email
+  - 💡 Ask on Stack Overflow with the appropriate tags
+
+  If you believe this is actually a bug or feature request, please reopen with more details.
+
+# Close issues marked as support requests
+close: true
+
+# Lock issues marked as support requests
+lock: false
