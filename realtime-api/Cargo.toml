@@ -43,6 +43,7 @@ reqwest = { workspace = true }
 # NATS JetStream for event streaming
 async-nats = { workspace = true }
 futures-util = "0.3"
+lazy_static = "1.4"
 
 # GraphQL
 async-graphql = { workspace = true }

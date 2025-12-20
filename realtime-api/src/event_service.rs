@@ -76,6 +76,12 @@ impl EventService {
             // but we log the error for monitoring
         }
 
+        // Broadcast to WebSocket connections
+        if let Err(e) = crate::websocket::broadcast_event_to_websockets(event).await {
+            warn!("Failed to broadcast event to WebSocket connections: {}", e);
+            // Don't fail the publish for WebSocket broadcast errors
+        }
+
         // Track usage metrics
         let usage_record = UsageRecord::new(
             event.tenant_id.clone(),

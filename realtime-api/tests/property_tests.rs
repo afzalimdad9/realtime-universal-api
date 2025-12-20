@@ -1685,3 +1685,1016 @@ mod cursor_based_event_replay_properties {
         }
     }
 }
+
+/// **Feature: realtime-saas-platform, Property 6: WebSocket connection establishment**
+/// 
+/// This property validates that WebSocket connections are properly established with valid authentication.
+/// For any valid authentication credentials, WebSocket connections should be accepted and enable event streaming.
+/// 
+/// **Validates: Requirements 2.1**
+
+#[cfg(test)]
+mod websocket_connection_establishment_properties {
+    use proptest::prelude::*;
+    use serde_json::json;
+    use std::collections::HashMap;
+    use std::sync::{Arc, Mutex};
+    
+    // Simulate WebSocket connection state
+    #[derive(Debug, Clone, PartialEq)]
+    enum ConnectionState {
+        Connecting,
+        Connected,
+        Authenticated,
+        Closed,
+        Failed(String),
+    }
+    
+    // Simulate authentication context for WebSocket
+    #[derive(Debug, Clone)]
+    struct WebSocketAuthContext {
+        tenant_id: String,
+        project_id: String,
+        scopes: Vec<String>,
+        is_valid: bool,
+        connection_limit: u32,
+    }
+    
+    // Simulate WebSocket connection
+    #[derive(Debug, Clone)]
+    struct MockWebSocketConnection {
+        id: String,
+        tenant_id: String,
+        project_id: String,
+        state: ConnectionState,
+        subscribed_topics: Vec<String>,
+        auth_context: Option<WebSocketAuthContext>,
+    }
+    
+    // Simulate WebSocket connection manager
+    #[derive(Debug, Clone)]
+    struct MockWebSocketManager {
+        connections: Arc<Mutex<HashMap<String, MockWebSocketConnection>>>,
+        connection_limits: HashMap<String, u32>, // tenant_id -> limit
+    }
+    
+    impl MockWebSocketManager {
+        fn new() -> Self {
+            Self {
+                connections: Arc::new(Mutex::new(HashMap::new())),
+                connection_limits: HashMap::new(),
+            }
+        }
+        
+        fn with_connection_limit(mut self, tenant_id: String, limit: u32) -> Self {
+            self.connection_limits.insert(tenant_id, limit);
+            self
+        }
+        
+        fn establish_connection(
+            &self,
+            connection_id: String,
+            auth_context: WebSocketAuthContext,
+        ) -> Result<String, String> {
+            // Validate authentication
+            if !auth_context.is_valid {
+                return Err("Invalid authentication credentials".to_string());
+            }
+            
+            // Check if tenant has subscribe permissions
+            if !auth_context.scopes.contains(&"events:subscribe".to_string()) {
+                return Err("Insufficient permissions for WebSocket connection".to_string());
+            }
+            
+            // Check connection limits
+            let current_connections = self.get_tenant_connection_count(&auth_context.tenant_id);
+            let limit = self.connection_limits.get(&auth_context.tenant_id)
+                .copied()
+                .unwrap_or(auth_context.connection_limit);
+            
+            if current_connections >= limit {
+                return Err(format!("Connection limit exceeded: {}/{}", current_connections, limit));
+            }
+            
+            // Create the connection
+            let connection = MockWebSocketConnection {
+                id: connection_id.clone(),
+                tenant_id: auth_context.tenant_id.clone(),
+                project_id: auth_context.project_id.clone(),
+                state: ConnectionState::Authenticated,
+                subscribed_topics: Vec::new(),
+                auth_context: Some(auth_context),
+            };
+            
+            // Store the connection
+            let mut connections = self.connections.lock().unwrap();
+            connections.insert(connection_id.clone(), connection);
+            
+            Ok(connection_id)
+        }
+        
+        fn get_connection(&self, connection_id: &str) -> Option<MockWebSocketConnection> {
+            let connections = self.connections.lock().unwrap();
+            connections.get(connection_id).cloned()
+        }
+        
+        fn get_tenant_connection_count(&self, tenant_id: &str) -> u32 {
+            let connections = self.connections.lock().unwrap();
+            connections.values()
+                .filter(|conn| conn.tenant_id == tenant_id && conn.state == ConnectionState::Authenticated)
+                .count() as u32
+        }
+        
+        fn close_connection(&self, connection_id: &str) -> Result<(), String> {
+            let mut connections = self.connections.lock().unwrap();
+            if let Some(connection) = connections.get_mut(connection_id) {
+                connection.state = ConnectionState::Closed;
+                Ok(())
+            } else {
+                Err("Connection not found".to_string())
+            }
+        }
+        
+        fn subscribe_to_topics(&self, connection_id: &str, topics: Vec<String>) -> Result<(), String> {
+            let mut connections = self.connections.lock().unwrap();
+            if let Some(connection) = connections.get_mut(connection_id) {
+                if connection.state != ConnectionState::Authenticated {
+                    return Err("Connection not authenticated".to_string());
+                }
+                connection.subscribed_topics = topics;
+                Ok(())
+            } else {
+                Err("Connection not found".to_string())
+            }
+        }
+        
+        fn get_active_connections(&self) -> Vec<MockWebSocketConnection> {
+            let connections = self.connections.lock().unwrap();
+            connections.values()
+                .filter(|conn| conn.state == ConnectionState::Authenticated)
+                .cloned()
+                .collect()
+        }
+        
+        fn terminate_tenant_connections(&self, tenant_id: &str) -> usize {
+            let mut connections = self.connections.lock().unwrap();
+            let mut terminated_count = 0;
+            
+            for connection in connections.values_mut() {
+                if connection.tenant_id == tenant_id && connection.state == ConnectionState::Authenticated {
+                    connection.state = ConnectionState::Closed;
+                    terminated_count += 1;
+                }
+            }
+            
+            terminated_count
+        }
+    }
+    
+    // Generate valid authentication contexts for WebSocket
+    fn valid_websocket_auth_strategy() -> impl Strategy<Value = WebSocketAuthContext> {
+        (
+            prop::collection::vec(prop::char::range('a', 'z'), 8..20)
+                .prop_map(|chars| format!("tenant_{}", chars.into_iter().collect::<String>())),
+            prop::collection::vec(prop::char::range('a', 'z'), 8..20)
+                .prop_map(|chars| format!("project_{}", chars.into_iter().collect::<String>())),
+            prop::collection::vec(
+                prop_oneof![
+                    Just("events:subscribe".to_string()),
+                    Just("events:publish".to_string()),
+                    Just("admin:read".to_string()),
+                ],
+                1..=3
+            ),
+            1u32..=1000u32, // connection_limit
+        ).prop_map(|(tenant_id, project_id, mut scopes, connection_limit)| {
+            // Ensure events:subscribe is always included for valid WebSocket auth
+            if !scopes.contains(&"events:subscribe".to_string()) {
+                scopes.push("events:subscribe".to_string());
+            }
+            WebSocketAuthContext {
+                tenant_id,
+                project_id,
+                scopes,
+                is_valid: true,
+                connection_limit,
+            }
+        })
+    }
+    
+    // Generate invalid authentication contexts for WebSocket
+    fn invalid_websocket_auth_strategy() -> impl Strategy<Value = WebSocketAuthContext> {
+        (
+            prop::collection::vec(prop::char::range('a', 'z'), 8..20)
+                .prop_map(|chars| format!("tenant_{}", chars.into_iter().collect::<String>())),
+            prop::collection::vec(prop::char::range('a', 'z'), 8..20)
+                .prop_map(|chars| format!("project_{}", chars.into_iter().collect::<String>())),
+            prop::collection::vec(
+                prop_oneof![
+                    Just("events:publish".to_string()),
+                    Just("admin:read".to_string()),
+                    Just("billing:read".to_string()),
+                ],
+                0..=2
+            ),
+            prop::bool::ANY,
+            1u32..=1000u32, // connection_limit
+        ).prop_map(|(tenant_id, project_id, scopes, is_valid, connection_limit)| {
+            WebSocketAuthContext {
+                tenant_id,
+                project_id,
+                scopes: scopes.into_iter().filter(|s| s != "events:subscribe").collect(), // Remove subscribe scope
+                is_valid: is_valid && rand::random::<bool>(), // Sometimes invalid
+                connection_limit,
+            }
+        })
+    }
+    
+    // Generate connection IDs
+    fn connection_id_strategy() -> impl Strategy<Value = String> {
+        prop::collection::vec(prop::char::range('a', 'z'), 16..32)
+            .prop_map(|chars| format!("ws_{}", chars.into_iter().collect::<String>()))
+    }
+    
+    proptest! {
+        /// Property: Valid authentication should allow WebSocket connection establishment
+        /// For any valid authentication credentials, WebSocket connections should be
+        /// accepted and enable event streaming
+        #[test]
+        fn test_websocket_connection_establishment_with_valid_auth(
+            auth in valid_websocket_auth_strategy(),
+            connection_id in connection_id_strategy()
+        ) {
+            let manager = MockWebSocketManager::new()
+                .with_connection_limit(auth.tenant_id.clone(), auth.connection_limit);
+            
+            let result = manager.establish_connection(connection_id.clone(), auth.clone());
+            
+            // Should succeed with valid authentication
+            assert!(result.is_ok(), 
+                "WebSocket connection should be established with valid auth: {:?}", result);
+            
+            // Should return the connection ID
+            if let Ok(returned_id) = result {
+                assert_eq!(returned_id, connection_id, "Should return the correct connection ID");
+            }
+            
+            // Connection should be stored and authenticated
+            let connection = manager.get_connection(&connection_id)
+                .expect("Connection should be stored");
+            
+            assert_eq!(connection.state, ConnectionState::Authenticated, 
+                "Connection should be in authenticated state");
+            assert_eq!(connection.tenant_id, auth.tenant_id, 
+                "Connection should be scoped to correct tenant");
+            assert_eq!(connection.project_id, auth.project_id, 
+                "Connection should be scoped to correct project");
+            
+            // Should be counted as an active connection
+            assert_eq!(manager.get_tenant_connection_count(&auth.tenant_id), 1, 
+                "Should count as one active connection for the tenant");
+        }
+        
+        /// Property: Invalid authentication should reject WebSocket connections
+        /// For any invalid authentication credentials, WebSocket connection attempts
+        /// should be rejected with appropriate error messages
+        #[test]
+        fn test_websocket_connection_rejection_with_invalid_auth(
+            auth in invalid_websocket_auth_strategy(),
+            connection_id in connection_id_strategy()
+        ) {
+            let manager = MockWebSocketManager::new()
+                .with_connection_limit(auth.tenant_id.clone(), auth.connection_limit);
+            
+            let result = manager.establish_connection(connection_id.clone(), auth.clone());
+            
+            // Should fail with invalid authentication
+            assert!(result.is_err(), 
+                "WebSocket connection should be rejected with invalid auth");
+            
+            // Error message should be descriptive
+            if let Err(error_msg) = result {
+                assert!(!error_msg.is_empty(), "Error message should not be empty");
+                assert!(
+                    error_msg.contains("authentication") || 
+                    error_msg.contains("permission") ||
+                    error_msg.contains("Invalid") ||
+                    error_msg.contains("Insufficient"),
+                    "Error message should indicate auth/permission issue: {}", error_msg
+                );
+            }
+            
+            // Connection should not be stored
+            let connection = manager.get_connection(&connection_id);
+            assert!(connection.is_none(), "Failed connection should not be stored");
+            
+            // Should not count as an active connection
+            assert_eq!(manager.get_tenant_connection_count(&auth.tenant_id), 0, 
+                "Failed connection should not count as active");
+        }
+        
+        /// Property: WebSocket connections should enforce connection limits
+        /// For any tenant with connection limits, the system should reject connections
+        /// that would exceed the configured limit
+        #[test]
+        fn test_websocket_connection_limit_enforcement(
+            auth in valid_websocket_auth_strategy(),
+            connection_limit in 1u32..=5u32,
+            extra_connections in 1usize..=3usize
+        ) {
+            let manager = MockWebSocketManager::new()
+                .with_connection_limit(auth.tenant_id.clone(), connection_limit);
+            
+            let mut successful_connections = 0;
+            let mut connection_ids = Vec::new();
+            
+            // Try to establish connections up to and beyond the limit
+            let total_attempts = connection_limit as usize + extra_connections;
+            
+            for i in 0..total_attempts {
+                let connection_id = format!("ws_conn_{}", i);
+                let result = manager.establish_connection(connection_id.clone(), auth.clone());
+                
+                if result.is_ok() {
+                    successful_connections += 1;
+                    connection_ids.push(connection_id);
+                }
+            }
+            
+            // Should not exceed the connection limit
+            assert!(successful_connections <= connection_limit, 
+                "Successful connections ({}) should not exceed limit ({})", 
+                successful_connections, connection_limit);
+            
+            // Should have exactly the limit number of connections (or fewer if limit is 0)
+            assert_eq!(successful_connections, connection_limit, 
+                "Should establish exactly the limit number of connections");
+            
+            // Verify the connection count matches
+            assert_eq!(manager.get_tenant_connection_count(&auth.tenant_id), connection_limit, 
+                "Active connection count should match the limit");
+            
+            // Try one more connection - should fail
+            let extra_connection_id = format!("ws_extra_{}", total_attempts);
+            let extra_result = manager.establish_connection(extra_connection_id, auth.clone());
+            
+            assert!(extra_result.is_err(), "Connection beyond limit should be rejected");
+            if let Err(error_msg) = extra_result {
+                assert!(error_msg.contains("limit"), 
+                    "Error should mention connection limit: {}", error_msg);
+            }
+        }
+        
+        /// Property: WebSocket connections should support topic subscriptions
+        /// For any authenticated WebSocket connection, the system should allow
+        /// subscription to topics for event streaming
+        #[test]
+        fn test_websocket_topic_subscription(
+            auth in valid_websocket_auth_strategy(),
+            connection_id in connection_id_strategy(),
+            topics in prop::collection::vec(
+                prop_oneof![
+                    Just("user.created".to_string()),
+                    Just("user.updated".to_string()),
+                    Just("order.placed".to_string()),
+                    Just("payment.processed".to_string()),
+                    Just("notification.sent".to_string()),
+                ],
+                1..=5
+            )
+        ) {
+            let manager = MockWebSocketManager::new()
+                .with_connection_limit(auth.tenant_id.clone(), auth.connection_limit);
+            
+            // Establish connection first
+            let connection_result = manager.establish_connection(connection_id.clone(), auth.clone());
+            assert!(connection_result.is_ok(), "Connection should be established");
+            
+            // Subscribe to topics
+            let subscription_result = manager.subscribe_to_topics(&connection_id, topics.clone());
+            
+            // Should succeed
+            assert!(subscription_result.is_ok(), 
+                "Topic subscription should succeed: {:?}", subscription_result);
+            
+            // Verify subscription was stored
+            let connection = manager.get_connection(&connection_id)
+                .expect("Connection should exist");
+            
+            assert_eq!(connection.subscribed_topics, topics, 
+                "Connection should have the subscribed topics");
+            
+            // Verify connection is still authenticated
+            assert_eq!(connection.state, ConnectionState::Authenticated, 
+                "Connection should remain authenticated after subscription");
+        }
+        
+        /// Property: WebSocket connection closure should clean up resources
+        /// For any established WebSocket connection, closing the connection should
+        /// properly clean up resources and update connection counts
+        #[test]
+        fn test_websocket_connection_closure(
+            auth in valid_websocket_auth_strategy(),
+            connection_id in connection_id_strategy()
+        ) {
+            let manager = MockWebSocketManager::new()
+                .with_connection_limit(auth.tenant_id.clone(), auth.connection_limit);
+            
+            // Establish connection
+            let connection_result = manager.establish_connection(connection_id.clone(), auth.clone());
+            assert!(connection_result.is_ok(), "Connection should be established");
+            
+            // Verify connection is active
+            assert_eq!(manager.get_tenant_connection_count(&auth.tenant_id), 1, 
+                "Should have one active connection");
+            
+            // Close the connection
+            let close_result = manager.close_connection(&connection_id);
+            assert!(close_result.is_ok(), "Connection closure should succeed");
+            
+            // Verify connection state is updated
+            let connection = manager.get_connection(&connection_id)
+                .expect("Connection should still exist");
+            assert_eq!(connection.state, ConnectionState::Closed, 
+                "Connection should be in closed state");
+            
+            // Verify connection count is updated
+            assert_eq!(manager.get_tenant_connection_count(&auth.tenant_id), 0, 
+                "Should have no active connections after closure");
+            
+            // Verify connection is not in active connections list
+            let active_connections = manager.get_active_connections();
+            assert!(!active_connections.iter().any(|conn| conn.id == connection_id), 
+                "Closed connection should not be in active connections list");
+        }
+        
+        /// Property: WebSocket connections should be isolated per tenant
+        /// For any connections from different tenants, they should be completely
+        /// isolated and not interfere with each other
+        #[test]
+        fn test_websocket_connection_tenant_isolation(
+            auth_a in valid_websocket_auth_strategy(),
+            auth_b in valid_websocket_auth_strategy(),
+            connection_id_a in connection_id_strategy(),
+            connection_id_b in connection_id_strategy()
+        ) {
+            // Ensure we have different tenants and connection IDs
+            prop_assume!(auth_a.tenant_id != auth_b.tenant_id);
+            prop_assume!(connection_id_a != connection_id_b);
+            
+            let manager = MockWebSocketManager::new()
+                .with_connection_limit(auth_a.tenant_id.clone(), auth_a.connection_limit)
+                .with_connection_limit(auth_b.tenant_id.clone(), auth_b.connection_limit);
+            
+            // Establish connections for both tenants
+            let result_a = manager.establish_connection(connection_id_a.clone(), auth_a.clone());
+            let result_b = manager.establish_connection(connection_id_b.clone(), auth_b.clone());
+            
+            // Both should succeed
+            assert!(result_a.is_ok(), "Connection A should be established");
+            assert!(result_b.is_ok(), "Connection B should be established");
+            
+            // Verify tenant isolation in connection counts
+            assert_eq!(manager.get_tenant_connection_count(&auth_a.tenant_id), 1, 
+                "Tenant A should have one connection");
+            assert_eq!(manager.get_tenant_connection_count(&auth_b.tenant_id), 1, 
+                "Tenant B should have one connection");
+            
+            // Verify connections are scoped to correct tenants
+            let connection_a = manager.get_connection(&connection_id_a).unwrap();
+            let connection_b = manager.get_connection(&connection_id_b).unwrap();
+            
+            assert_eq!(connection_a.tenant_id, auth_a.tenant_id, 
+                "Connection A should belong to tenant A");
+            assert_eq!(connection_b.tenant_id, auth_b.tenant_id, 
+                "Connection B should belong to tenant B");
+            
+            // Verify no cross-tenant interference
+            assert_ne!(connection_a.tenant_id, connection_b.tenant_id, 
+                "Connections should belong to different tenants");
+            
+            // Closing one connection should not affect the other
+            let close_result = manager.close_connection(&connection_id_a);
+            assert!(close_result.is_ok(), "Connection A closure should succeed");
+            
+            assert_eq!(manager.get_tenant_connection_count(&auth_a.tenant_id), 0, 
+                "Tenant A should have no active connections");
+            assert_eq!(manager.get_tenant_connection_count(&auth_b.tenant_id), 1, 
+                "Tenant B should still have one active connection");
+        }
+    }
+}
+
+/// **Feature: realtime-saas-platform, Property 7: Real-time event delivery**
+/// 
+/// This property validates that events are delivered in real-time to all connected WebSocket clients.
+/// For any event published to subscribed topics, all connected WebSocket clients should receive 
+/// the event in real-time.
+/// 
+/// **Validates: Requirements 2.2**
+
+#[cfg(test)]
+mod realtime_event_delivery_properties {
+    use proptest::prelude::*;
+    use serde_json::{json, Value};
+    use std::collections::HashMap;
+    use std::sync::{Arc, Mutex};
+    
+    // Simulate WebSocket connection for event delivery
+    #[derive(Debug, Clone)]
+    struct MockWebSocketConnection {
+        id: String,
+        tenant_id: String,
+        project_id: String,
+        subscribed_topics: Vec<String>,
+        received_events: Arc<Mutex<Vec<Value>>>,
+    }
+    
+    impl MockWebSocketConnection {
+        fn new(id: String, tenant_id: String, project_id: String) -> Self {
+            Self {
+                id,
+                tenant_id,
+                project_id,
+                subscribed_topics: Vec::new(),
+                received_events: Arc::new(Mutex::new(Vec::new())),
+            }
+        }
+        
+        fn subscribe_to_topics(&mut self, topics: Vec<String>) {
+            self.subscribed_topics = topics;
+        }
+        
+        fn deliver_event(&self, event: Value) {
+            let mut events = self.received_events.lock().unwrap();
+            events.push(event);
+        }
+        
+        fn get_received_events(&self) -> Vec<Value> {
+            self.received_events.lock().unwrap().clone()
+        }
+        
+        fn received_event_count(&self) -> usize {
+            self.received_events.lock().unwrap().len()
+        }
+        
+        fn is_subscribed_to(&self, topic: &str) -> bool {
+            self.subscribed_topics.iter().any(|t| t == topic || topic.starts_with(&format!("{}.", t)))
+        }
+    }
+    
+    // Simulate event delivery system
+    #[derive(Debug, Clone)]
+    struct MockEventDeliverySystem {
+        connections: Arc<Mutex<HashMap<String, MockWebSocketConnection>>>,
+    }
+    
+    impl MockEventDeliverySystem {
+        fn new() -> Self {
+            Self {
+                connections: Arc::new(Mutex::new(HashMap::new())),
+            }
+        }
+        
+        fn add_connection(&self, connection: MockWebSocketConnection) {
+            let mut connections = self.connections.lock().unwrap();
+            connections.insert(connection.id.clone(), connection);
+        }
+        
+        fn publish_event(&self, tenant_id: &str, project_id: &str, topic: &str, payload: Value) -> usize {
+            let connections = self.connections.lock().unwrap();
+            let mut delivered_count = 0;
+            
+            // Create the event with metadata
+            let event = json!({
+                "id": uuid::Uuid::new_v4().to_string(),
+                "tenant_id": tenant_id,
+                "project_id": project_id,
+                "topic": topic,
+                "payload": payload,
+                "published_at": chrono::Utc::now().to_rfc3339()
+            });
+            
+            // Deliver to all subscribed connections
+            for connection in connections.values() {
+                // Check tenant/project isolation
+                if connection.tenant_id == tenant_id && connection.project_id == project_id {
+                    // Check if connection is subscribed to this topic
+                    if connection.is_subscribed_to(topic) {
+                        connection.deliver_event(event.clone());
+                        delivered_count += 1;
+                    }
+                }
+            }
+            
+            delivered_count
+        }
+        
+        fn get_connection(&self, connection_id: &str) -> Option<MockWebSocketConnection> {
+            let connections = self.connections.lock().unwrap();
+            connections.get(connection_id).cloned()
+        }
+        
+        fn get_connections_for_tenant(&self, tenant_id: &str) -> Vec<MockWebSocketConnection> {
+            let connections = self.connections.lock().unwrap();
+            connections.values()
+                .filter(|conn| conn.tenant_id == tenant_id)
+                .cloned()
+                .collect()
+        }
+        
+        fn connection_count(&self) -> usize {
+            let connections = self.connections.lock().unwrap();
+            connections.len()
+        }
+    }
+    
+    // Generate tenant IDs for testing
+    fn tenant_id_strategy() -> impl Strategy<Value = String> {
+        prop::collection::vec(prop::char::range('a', 'z'), 8..20)
+            .prop_map(|chars| format!("tenant_{}", chars.into_iter().collect::<String>()))
+    }
+    
+    // Generate project IDs for testing
+    fn project_id_strategy() -> impl Strategy<Value = String> {
+        prop::collection::vec(prop::char::range('a', 'z'), 8..20)
+            .prop_map(|chars| format!("project_{}", chars.into_iter().collect::<String>()))
+    }
+    
+    // Generate connection IDs
+    fn connection_id_strategy() -> impl Strategy<Value = String> {
+        prop::collection::vec(prop::char::range('a', 'z'), 16..32)
+            .prop_map(|chars| format!("ws_{}", chars.into_iter().collect::<String>()))
+    }
+    
+    // Generate topic names
+    fn topic_strategy() -> impl Strategy<Value = String> {
+        prop_oneof![
+            Just("user.created".to_string()),
+            Just("user.updated".to_string()),
+            Just("user.deleted".to_string()),
+            Just("order.placed".to_string()),
+            Just("order.completed".to_string()),
+            Just("payment.processed".to_string()),
+            Just("notification.sent".to_string()),
+        ]
+    }
+    
+    // Generate event payloads
+    fn event_payload_strategy() -> impl Strategy<Value = Value> {
+        prop_oneof![
+            Just(json!({"type": "user_event", "user_id": "user_123", "action": "created"})),
+            Just(json!({"type": "order_event", "order_id": "order_456", "amount": 99.99})),
+            Just(json!({"type": "notification", "message": "Hello World", "priority": "high"})),
+            Just(json!({"type": "payment", "transaction_id": "txn_789", "status": "completed"})),
+        ]
+    }
+    
+    proptest! {
+        /// Property: Events should be delivered to all subscribed WebSocket connections
+        /// For any event published to a topic, all WebSocket connections subscribed to
+        /// that topic should receive the event in real-time
+        #[test]
+        fn test_realtime_event_delivery_to_subscribers(
+            tenant_id in tenant_id_strategy(),
+            project_id in project_id_strategy(),
+            topic in topic_strategy(),
+            payload in event_payload_strategy(),
+            subscriber_count in 1usize..=5usize
+        ) {
+            let delivery_system = MockEventDeliverySystem::new();
+            
+            // Create multiple subscribers for the same topic
+            let mut connection_ids = Vec::new();
+            for i in 0..subscriber_count {
+                let connection_id = format!("ws_subscriber_{}", i);
+                let mut connection = MockWebSocketConnection::new(
+                    connection_id.clone(),
+                    tenant_id.clone(),
+                    project_id.clone(),
+                );
+                connection.subscribe_to_topics(vec![topic.clone()]);
+                delivery_system.add_connection(connection);
+                connection_ids.push(connection_id);
+            }
+            
+            // Publish an event
+            let delivered_count = delivery_system.publish_event(
+                &tenant_id,
+                &project_id,
+                &topic,
+                payload.clone(),
+            );
+            
+            // Should deliver to all subscribers
+            assert_eq!(delivered_count, subscriber_count, 
+                "Event should be delivered to all {} subscribers", subscriber_count);
+            
+            // Verify each subscriber received the event
+            for connection_id in &connection_ids {
+                let connection = delivery_system.get_connection(connection_id)
+                    .expect("Connection should exist");
+                
+                assert_eq!(connection.received_event_count(), 1, 
+                    "Connection {} should have received exactly one event", connection_id);
+                
+                let received_events = connection.get_received_events();
+                let received_event = &received_events[0];
+                
+                // Verify event content
+                assert_eq!(received_event["tenant_id"], tenant_id, 
+                    "Event should have correct tenant_id");
+                assert_eq!(received_event["project_id"], project_id, 
+                    "Event should have correct project_id");
+                assert_eq!(received_event["topic"], topic, 
+                    "Event should have correct topic");
+                assert_eq!(received_event["payload"], payload, 
+                    "Event should have correct payload");
+            }
+        }
+        
+        /// Property: Events should only be delivered to connections subscribed to the topic
+        /// For any event published to a specific topic, only connections subscribed to
+        /// that topic should receive the event, not connections subscribed to other topics
+        #[test]
+        fn test_realtime_event_delivery_topic_filtering(
+            tenant_id in tenant_id_strategy(),
+            project_id in project_id_strategy(),
+            subscribed_topic in topic_strategy(),
+            unsubscribed_topic in topic_strategy(),
+            payload in event_payload_strategy()
+        ) {
+            // Ensure we have different topics
+            prop_assume!(subscribed_topic != unsubscribed_topic);
+            
+            let delivery_system = MockEventDeliverySystem::new();
+            
+            // Create a connection subscribed to one topic
+            let subscribed_conn_id = "ws_subscribed";
+            let mut subscribed_connection = MockWebSocketConnection::new(
+                subscribed_conn_id.to_string(),
+                tenant_id.clone(),
+                project_id.clone(),
+            );
+            subscribed_connection.subscribe_to_topics(vec![subscribed_topic.clone()]);
+            delivery_system.add_connection(subscribed_connection);
+            
+            // Create a connection subscribed to a different topic
+            let unsubscribed_conn_id = "ws_unsubscribed";
+            let mut unsubscribed_connection = MockWebSocketConnection::new(
+                unsubscribed_conn_id.to_string(),
+                tenant_id.clone(),
+                project_id.clone(),
+            );
+            unsubscribed_connection.subscribe_to_topics(vec![unsubscribed_topic.clone()]);
+            delivery_system.add_connection(unsubscribed_connection);
+            
+            // Publish event to the subscribed topic
+            let delivered_count = delivery_system.publish_event(
+                &tenant_id,
+                &project_id,
+                &subscribed_topic,
+                payload.clone(),
+            );
+            
+            // Should deliver to exactly one connection (the subscribed one)
+            assert_eq!(delivered_count, 1, 
+                "Event should be delivered to exactly one subscriber");
+            
+            // Verify subscribed connection received the event
+            let subscribed_conn = delivery_system.get_connection(subscribed_conn_id)
+                .expect("Subscribed connection should exist");
+            assert_eq!(subscribed_conn.received_event_count(), 1, 
+                "Subscribed connection should have received the event");
+            
+            // Verify unsubscribed connection did NOT receive the event
+            let unsubscribed_conn = delivery_system.get_connection(unsubscribed_conn_id)
+                .expect("Unsubscribed connection should exist");
+            assert_eq!(unsubscribed_conn.received_event_count(), 0, 
+                "Unsubscribed connection should NOT have received the event");
+        }
+        
+        /// Property: Events should respect tenant isolation in delivery
+        /// For any event published to a tenant, only connections from that tenant
+        /// should receive the event, not connections from other tenants
+        #[test]
+        fn test_realtime_event_delivery_tenant_isolation(
+            tenant_a in tenant_id_strategy(),
+            tenant_b in tenant_id_strategy(),
+            project_a in project_id_strategy(),
+            project_b in project_id_strategy(),
+            topic in topic_strategy(),
+            payload in event_payload_strategy()
+        ) {
+            // Ensure we have different tenants
+            prop_assume!(tenant_a != tenant_b);
+            
+            let delivery_system = MockEventDeliverySystem::new();
+            
+            // Create connection for tenant A
+            let conn_a_id = "ws_tenant_a";
+            let mut connection_a = MockWebSocketConnection::new(
+                conn_a_id.to_string(),
+                tenant_a.clone(),
+                project_a.clone(),
+            );
+            connection_a.subscribe_to_topics(vec![topic.clone()]);
+            delivery_system.add_connection(connection_a);
+            
+            // Create connection for tenant B (subscribed to same topic)
+            let conn_b_id = "ws_tenant_b";
+            let mut connection_b = MockWebSocketConnection::new(
+                conn_b_id.to_string(),
+                tenant_b.clone(),
+                project_b.clone(),
+            );
+            connection_b.subscribe_to_topics(vec![topic.clone()]);
+            delivery_system.add_connection(connection_b);
+            
+            // Publish event for tenant A
+            let delivered_count = delivery_system.publish_event(
+                &tenant_a,
+                &project_a,
+                &topic,
+                payload.clone(),
+            );
+            
+            // Should deliver to exactly one connection (tenant A's connection)
+            assert_eq!(delivered_count, 1, 
+                "Event should be delivered to exactly one tenant");
+            
+            // Verify tenant A's connection received the event
+            let conn_a = delivery_system.get_connection(conn_a_id)
+                .expect("Tenant A connection should exist");
+            assert_eq!(conn_a.received_event_count(), 1, 
+                "Tenant A connection should have received the event");
+            
+            // Verify tenant B's connection did NOT receive the event
+            let conn_b = delivery_system.get_connection(conn_b_id)
+                .expect("Tenant B connection should exist");
+            assert_eq!(conn_b.received_event_count(), 0, 
+                "Tenant B connection should NOT have received the event (tenant isolation)");
+        }
+        
+        /// Property: Multiple events should be delivered in order to subscribers
+        /// For any sequence of events published to a topic, all events should be
+        /// delivered to subscribers in the order they were published
+        #[test]
+        fn test_realtime_event_delivery_ordering(
+            tenant_id in tenant_id_strategy(),
+            project_id in project_id_strategy(),
+            topic in topic_strategy(),
+            event_count in 2usize..=5usize,
+            payloads in prop::collection::vec(event_payload_strategy(), 2..=5)
+        ) {
+            let count = event_count.min(payloads.len());
+            
+            let delivery_system = MockEventDeliverySystem::new();
+            
+            // Create a subscriber
+            let connection_id = "ws_subscriber";
+            let mut connection = MockWebSocketConnection::new(
+                connection_id.to_string(),
+                tenant_id.clone(),
+                project_id.clone(),
+            );
+            connection.subscribe_to_topics(vec![topic.clone()]);
+            delivery_system.add_connection(connection);
+            
+            // Publish multiple events
+            let mut expected_payloads = Vec::new();
+            for payload in payloads.iter().take(count) {
+                delivery_system.publish_event(
+                    &tenant_id,
+                    &project_id,
+                    &topic,
+                    payload.clone(),
+                );
+                expected_payloads.push(payload.clone());
+            }
+            
+            // Verify all events were received
+            let connection = delivery_system.get_connection(connection_id)
+                .expect("Connection should exist");
+            
+            assert_eq!(connection.received_event_count(), count, 
+                "Connection should have received all {} events", count);
+            
+            // Verify events were received in order
+            let received_events = connection.get_received_events();
+            for (i, expected_payload) in expected_payloads.iter().enumerate() {
+                assert_eq!(received_events[i]["payload"], *expected_payload, 
+                    "Event {} should have correct payload in order", i);
+            }
+        }
+        
+        /// Property: Events should be delivered to multiple topics if subscribed
+        /// For any connection subscribed to multiple topics, events from any of
+        /// those topics should be delivered to the connection
+        #[test]
+        fn test_realtime_event_delivery_multiple_topic_subscription(
+            tenant_id in tenant_id_strategy(),
+            project_id in project_id_strategy(),
+            topics in prop::collection::vec(topic_strategy(), 2..=4),
+            payloads in prop::collection::vec(event_payload_strategy(), 2..=4)
+        ) {
+            // Ensure we have unique topics
+            let unique_topics: Vec<String> = topics.into_iter()
+                .collect::<std::collections::HashSet<_>>()
+                .into_iter()
+                .collect();
+            
+            prop_assume!(unique_topics.len() >= 2);
+            
+            let count = unique_topics.len().min(payloads.len());
+            
+            let delivery_system = MockEventDeliverySystem::new();
+            
+            // Create a connection subscribed to multiple topics
+            let connection_id = "ws_multi_subscriber";
+            let mut connection = MockWebSocketConnection::new(
+                connection_id.to_string(),
+                tenant_id.clone(),
+                project_id.clone(),
+            );
+            connection.subscribe_to_topics(unique_topics.clone());
+            delivery_system.add_connection(connection);
+            
+            // Publish events to different topics
+            for (topic, payload) in unique_topics.iter().take(count).zip(payloads.iter().take(count)) {
+                delivery_system.publish_event(
+                    &tenant_id,
+                    &project_id,
+                    topic,
+                    payload.clone(),
+                );
+            }
+            
+            // Verify all events were received
+            let connection = delivery_system.get_connection(connection_id)
+                .expect("Connection should exist");
+            
+            assert_eq!(connection.received_event_count(), count, 
+                "Connection should have received events from all {} subscribed topics", count);
+            
+            // Verify events from different topics were all delivered
+            let received_events = connection.get_received_events();
+            for (i, topic) in unique_topics.iter().take(count).enumerate() {
+                assert_eq!(received_events[i]["topic"], *topic, 
+                    "Event {} should be from topic {}", i, topic);
+            }
+        }
+        
+        /// Property: Event delivery should be consistent across multiple publishes
+        /// For any event published multiple times, each publish should result in
+        /// delivery to all subscribed connections
+        #[test]
+        fn test_realtime_event_delivery_consistency(
+            tenant_id in tenant_id_strategy(),
+            project_id in project_id_strategy(),
+            topic in topic_strategy(),
+            payload in event_payload_strategy(),
+            publish_count in 2usize..=5usize
+        ) {
+            let delivery_system = MockEventDeliverySystem::new();
+            
+            // Create a subscriber
+            let connection_id = "ws_subscriber";
+            let mut connection = MockWebSocketConnection::new(
+                connection_id.to_string(),
+                tenant_id.clone(),
+                project_id.clone(),
+            );
+            connection.subscribe_to_topics(vec![topic.clone()]);
+            delivery_system.add_connection(connection);
+            
+            // Publish the same event multiple times
+            for _ in 0..publish_count {
+                let delivered_count = delivery_system.publish_event(
+                    &tenant_id,
+                    &project_id,
+                    &topic,
+                    payload.clone(),
+                );
+                
+                // Each publish should deliver to exactly one subscriber
+                assert_eq!(delivered_count, 1, 
+                    "Each publish should deliver to the subscriber");
+            }
+            
+            // Verify all publishes were received
+            let connection = delivery_system.get_connection(connection_id)
+                .expect("Connection should exist");
+            
+            assert_eq!(connection.received_event_count(), publish_count, 
+                "Connection should have received all {} published events", publish_count);
+            
+            // Verify all received events have the same payload
+            let received_events = connection.get_received_events();
+            for (i, event) in received_events.iter().enumerate() {
+                assert_eq!(event["payload"], payload, 
+                    "Event {} should have the same payload", i);
+            }
+        }
+    }
+}

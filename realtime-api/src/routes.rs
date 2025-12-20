@@ -1,6 +1,7 @@
 use axum::{
-    extract::{Extension, ws::WebSocketUpgrade},
+    extract::{Extension, Query, State, ws::WebSocketUpgrade},
     middleware,
+    response::Response,
     routing::{delete, get, post},
     Router,
 };
@@ -9,6 +10,8 @@ use tower_http::{
     cors::{Any, CorsLayer},
     trace::TraceLayer,
 };
+use serde::Deserialize;
+use std::collections::HashMap;
 
 use crate::api::{
     create_api_key, create_tenant, get_usage_report, handle_stripe_webhook, health_check,
@@ -37,6 +40,9 @@ pub fn create_router(state: AppState) -> Router {
         // GraphQL playground (development only - should be disabled in production)
         .route("/graphql/playground", get(graphql_playground))
         
+        // WebSocket endpoint (authentication handled in the handler)
+        .route("/ws", get(websocket_handler))
+        
         // Protected endpoints (require authentication)
         // TODO: Fix axum version conflicts for GraphQL routes
         // .route("/graphql", post(graphql_handler_with_auth))
@@ -47,7 +53,7 @@ pub fn create_router(state: AppState) -> Router {
         .route("/admin/api-keys/:key_id", delete(revoke_api_key))
         .route("/billing/usage", get(get_usage_report))
         
-        // Apply authentication middleware to protected routes (except playground)
+        // Apply authentication middleware to protected routes (except playground and WebSocket)
         .layer(middleware::from_fn_with_state(
             auth_service,
             api_key_auth_middleware,
@@ -82,9 +88,70 @@ pub fn create_sse_router(state: AppState) -> Router {
         .with_state(state)
 }
 
-/// WebSocket handler (placeholder for future implementation)
-async fn websocket_handler() -> &'static str {
-    "WebSocket endpoint - to be implemented in task 7"
+/// WebSocket connection query parameters
+#[derive(Debug, Deserialize)]
+pub struct WebSocketQuery {
+    pub topics: Option<String>, // Comma-separated list of topics
+}
+
+/// WebSocket handler with authentication and subscription management
+async fn websocket_handler(
+    State(state): State<AppState>,
+    ws: WebSocketUpgrade,
+    Query(params): Query<WebSocketQuery>,
+    headers: axum::http::HeaderMap,
+) -> Result<Response, axum::http::StatusCode> {
+    use crate::auth::{extract_auth_header, AuthError};
+    use crate::websocket::{handle_websocket_connection, WebSocketConnectionParams};
+    
+    // Extract authentication from headers
+    let auth_value = match extract_auth_header(&headers) {
+        Ok(value) => value,
+        Err(_) => return Err(axum::http::StatusCode::UNAUTHORIZED),
+    };
+    
+    // Validate authentication
+    let auth_context = match state.auth_service.validate_api_key(&auth_value).await {
+        Ok(context) => context,
+        Err(AuthError::InvalidApiKey) => {
+            // Try JWT validation as fallback
+            match state.auth_service.validate_jwt(&auth_value).await {
+                Ok(context) => context,
+                Err(_) => return Err(axum::http::StatusCode::UNAUTHORIZED),
+            }
+        }
+        Err(AuthError::RateLimitExceeded) => {
+            return Err(axum::http::StatusCode::TOO_MANY_REQUESTS);
+        }
+        Err(AuthError::TenantSuspended) => {
+            return Err(axum::http::StatusCode::FORBIDDEN);
+        }
+        Err(_) => return Err(axum::http::StatusCode::UNAUTHORIZED),
+    };
+    
+    // Check if the API key has subscribe permissions
+    use crate::models::Scope;
+    if let Err(_) = state.auth_service.check_scope(&auth_context, &Scope::EventsSubscribe) {
+        return Err(axum::http::StatusCode::FORBIDDEN);
+    }
+    
+    // Parse topics from query parameters
+    let topics = params.topics
+        .map(|t| t.split(',').map(|s| s.trim().to_string()).collect())
+        .unwrap_or_else(Vec::new);
+    
+    // Create connection parameters
+    let connection_params = WebSocketConnectionParams {
+        tenant_id: auth_context.tenant_id.clone(),
+        project_id: auth_context.project_id.clone(),
+        topics,
+        auth_context,
+    };
+    
+    // Upgrade to WebSocket
+    Ok(ws.on_upgrade(move |socket| {
+        handle_websocket_connection(socket, connection_params, state)
+    }))
 }
 
 /// SSE handler (placeholder for future implementation)
