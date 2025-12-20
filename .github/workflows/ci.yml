@@ -116,7 +116,7 @@ jobs:
           NATS_URL: nats://localhost:4222
 
       - name: Upload to codecov.io
-        uses: codecov/codecov-action@v3
+        uses: codecov/codecov-action@v5
         with:
           file: cobertura.xml
           fail_ci_if_error: true
