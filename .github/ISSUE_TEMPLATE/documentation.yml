@@ -1,0 +1,92 @@
+name: 📚 Documentation Improvement
+description: Suggest improvements to documentation
+title: "[DOCS] "
+labels: ["documentation", "good first issue"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Thanks for helping improve our documentation! Clear docs make the project more accessible to everyone.
+
+  - type: dropdown
+    id: doc-type
+    attributes:
+      label: Documentation Type
+      description: What type of documentation needs improvement?
+      options:
+        - README
+        - API Documentation
+        - Protocol Documentation
+        - Setup/Installation Guide
+        - Developer Guide
+        - Deployment Guide
+        - SDK Documentation
+        - Code Comments
+        - Architecture Documentation
+        - Troubleshooting Guide
+        - Other
+    validations:
+      required: true
+
+  - type: textarea
+    id: issue
+    attributes:
+      label: Documentation Issue
+      description: What's wrong with the current documentation?
+      placeholder: |
+        - Information is missing
+        - Instructions are unclear
+        - Examples don't work
+        - Information is outdated
+        - Typos or grammar issues
+    validations:
+      required: true
+
+  - type: textarea
+    id: location
+    attributes:
+      label: Location
+      description: Where is this documentation located?
+      placeholder: |
+        - File path: e.g., README.md, docs/api.md
+        - URL: e.g., https://...
+        - Section: e.g., "Quick Start" section
+    validations:
+      required: true
+
+  - type: textarea
+    id: suggestion
+    attributes:
+      label: Suggested Improvement
+      description: How should the documentation be improved?
+      placeholder: |
+        - Add missing information about...
+        - Clarify the steps for...
+        - Update the example to show...
+        - Fix the typo in...
+
+  - type: dropdown
+    id: audience
+    attributes:
+      label: Target Audience
+      description: Who would benefit from this documentation improvement?
+      options:
+        - New users getting started
+        - Developers integrating the API
+        - System administrators deploying
+        - Contributors to the project
+        - Protocol implementers
+        - All users
+    validations:
+      required: true
+
+  - type: textarea
+    id: context
+    attributes:
+      label: Additional Context
+      description: Any other context that would help improve the documentation?
+      placeholder: |
+        - User feedback received
+        - Common questions in issues
+        - Related documentation that works well
+        - Screenshots or examples

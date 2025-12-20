@@ -1,0 +1,111 @@
+name: 🔒 Security Vulnerability
+description: Report a security vulnerability (use private disclosure for critical issues)
+title: "[SECURITY] "
+labels: ["security", "needs-triage"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        ⚠️ **IMPORTANT**: For critical security vulnerabilities, please use GitHub's private vulnerability reporting feature or email us directly instead of creating a public issue.
+
+        This template is for non-critical security improvements and general security-related discussions.
+
+  - type: dropdown
+    id: severity
+    attributes:
+      label: Severity Level
+      description: How severe is this security issue?
+      options:
+        - Low - Security improvement suggestion
+        - Medium - Potential security concern
+        - High - Confirmed vulnerability with limited impact
+        - Critical - Confirmed vulnerability with significant impact (use private reporting!)
+    validations:
+      required: true
+
+  - type: textarea
+    id: description
+    attributes:
+      label: Security Issue Description
+      description: Describe the security concern or vulnerability
+      placeholder: |
+        Please describe:
+        - What the security issue is
+        - Which components are affected
+        - Potential impact
+    validations:
+      required: true
+
+  - type: textarea
+    id: affected-components
+    attributes:
+      label: Affected Components
+      description: Which parts of the system are affected?
+      options:
+        - Authentication system
+        - API endpoints
+        - WebSocket connections
+        - Database queries
+        - NATS messaging
+        - Docker configuration
+        - Dependencies
+        - Other
+    validations:
+      required: true
+
+  - type: textarea
+    id: reproduction
+    attributes:
+      label: Steps to Reproduce (if applicable)
+      description: If this is a confirmed vulnerability, how can it be reproduced?
+      placeholder: |
+        1. Configure the system with...
+        2. Send a request to...
+        3. Observe the security issue...
+
+  - type: textarea
+    id: impact
+    attributes:
+      label: Potential Impact
+      description: What could an attacker potentially do with this vulnerability?
+      placeholder: |
+        - Data exposure
+        - Privilege escalation
+        - Denial of service
+        - Code execution
+        - Other impacts...
+
+  - type: textarea
+    id: mitigation
+    attributes:
+      label: Suggested Mitigation
+      description: Do you have suggestions for how to fix this issue?
+      placeholder: |
+        - Input validation
+        - Access control changes
+        - Configuration updates
+        - Dependency updates
+        - Other solutions...
+
+  - type: textarea
+    id: environment
+    attributes:
+      label: Environment Details
+      description: What environment was this discovered in?
+      value: |
+        - Deployment type: [local/staging/production]
+        - Version: [git commit or release version]
+        - Configuration: [relevant config details]
+
+  - type: checkboxes
+    id: disclosure
+    attributes:
+      label: Responsible Disclosure
+      description: Please confirm your understanding of responsible disclosure
+      options:
+        - label: I understand this issue will be publicly visible
+          required: true
+        - label: I confirm this is not a critical vulnerability requiring private disclosure
+          required: true
+        - label: I have not shared details of this vulnerability publicly elsewhere
+          required: true

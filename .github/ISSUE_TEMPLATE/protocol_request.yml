@@ -1,0 +1,115 @@
+name: 🌐 Protocol Implementation Request
+description: Request support for a new communication protocol
+title: "[PROTOCOL] Add support for "
+labels: ["protocol", "enhancement", "needs-triage"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Thanks for requesting a new protocol! This helps us prioritize which protocols to implement next.
+
+  - type: input
+    id: protocol-name
+    attributes:
+      label: Protocol Name
+      description: What protocol would you like us to support?
+      placeholder: e.g., HTTP/3, MQTT, gRPC, WebRTC
+    validations:
+      required: true
+
+  - type: dropdown
+    id: category
+    attributes:
+      label: Protocol Category
+      description: Which category does this protocol belong to?
+      options:
+        - HTTP/Application Layer
+        - RPC/Binary APIs
+        - Realtime/Streaming
+        - Messaging/Pub-Sub
+        - File/Transfer
+        - Discovery/Control
+        - Transport/Network
+        - Security/Auth Related
+    validations:
+      required: true
+
+  - type: textarea
+    id: use-case
+    attributes:
+      label: Use Case
+      description: What would you use this protocol for? Why is it important?
+      placeholder: |
+        I need this protocol because...
+        My use case involves...
+        This would enable...
+    validations:
+      required: true
+
+  - type: textarea
+    id: specification
+    attributes:
+      label: Protocol Specification
+      description: Please provide links to official specifications, RFCs, or documentation
+      placeholder: |
+        - RFC: https://...
+        - Official docs: https://...
+        - Implementation examples: https://...
+
+  - type: dropdown
+    id: priority
+    attributes:
+      label: Business Priority
+      description: How critical is this protocol for your project?
+      options:
+        - Low - Experimental/future use
+        - Medium - Planned for next quarter
+        - High - Needed within 2 months
+        - Critical - Blocking current project
+    validations:
+      required: true
+
+  - type: textarea
+    id: existing-implementations
+    attributes:
+      label: Existing Implementations
+      description: Are there existing Rust crates or libraries for this protocol?
+      placeholder: |
+        - Crate name: link to crates.io
+        - Library: link to GitHub
+        - Known limitations: ...
+
+  - type: textarea
+    id: integration-requirements
+    attributes:
+      label: Integration Requirements
+      description: How should this protocol integrate with existing features?
+      placeholder: |
+        - Authentication: Should use existing JWT/API key system
+        - Event routing: Should integrate with NATS JetStream
+        - Tenant isolation: Should respect multi-tenant boundaries
+        - Monitoring: Should emit OpenTelemetry traces
+
+  - type: checkboxes
+    id: implementation-scope
+    attributes:
+      label: Implementation Scope
+      description: What level of implementation do you need?
+      options:
+        - label: Basic protocol support (minimal viable implementation)
+        - label: Full specification compliance
+        - label: Performance optimizations
+        - label: Client SDK support (JS/Rust/Python)
+        - label: Load balancing and clustering support
+        - label: Monitoring and observability integration
+
+  - type: textarea
+    id: additional
+    attributes:
+      label: Additional Context
+      description: Any other information that would help with implementation?
+      placeholder: |
+        - Performance requirements
+        - Compatibility concerns
+        - Security considerations
+        - Timeline constraints
