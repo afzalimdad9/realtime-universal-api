@@ -27,7 +27,7 @@ jobs:
           echo "EOF" >> $GITHUB_OUTPUT
 
       - name: Create Release
-        uses: softprops/action-gh-release@v1
+        uses: softprops/action-gh-release@v2
         with:
           name: Release ${{ github.ref_name }}
           body: ${{ steps.changelog.outputs.CHANGELOG }}
@@ -75,6 +75,6 @@ jobs:
           7z a ../../../realtime-universal-api-${{ matrix.target }}.zip realtime-api.exe
 
       - name: Upload binary to release
-        uses: softprops/action-gh-release@v1
+        uses: softprops/action-gh-release@v2
         with:
           files: ./realtime-universal-api-${{ matrix.target }}.${{ matrix.os == 'windows-latest' && 'zip' || 'tar.gz' }}
