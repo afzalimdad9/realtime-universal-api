@@ -211,45 +211,45 @@ This implementation plan converts the Realtime SaaS Platform design into actiona
   - **Property 10: Tenant suspension termination**
   - **Validates: Requirements 2.5**
 
-- [ ] 8. Implement Server-Sent Events (SSE) support
+- [x] 8. Implement Server-Sent Events (SSE) support
   - Create SSE endpoint with proper event formatting
   - Implement SSE-specific connection management and quotas
   - Add fallback mechanism from WebSocket to SSE
   - Ensure proper resource cleanup on client disconnection
   - _Requirements: 3.1, 3.2, 3.3, 3.4, 3.5_
 
-- [ ] 8.1 Write property test for SSE connection establishment
+- [x] 8.1 Write property test for SSE connection establishment
   - **Property 11: SSE connection establishment**
   - **Validates: Requirements 3.1**
 
-- [ ] 8.2 Write property test for SSE event formatting
+- [x] 8.2 Write property test for SSE event formatting
   - **Property 12: SSE event delivery formatting**
   - **Validates: Requirements 3.2**
 
-- [ ] 8.3 Write property test for SSE resource cleanup
+- [x] 8.3 Write property test for SSE resource cleanup
   - **Property 14: SSE resource cleanup**
   - **Validates: Requirements 3.4**
 
-- [ ] 9. Build usage tracking and billing system
+- [x] 9. Build usage tracking and billing system
   - Implement usage metric collection for events, connections, and API calls
   - Create Stripe integration for metered billing and subscription management
   - Add usage limit enforcement and kill switch functionality
   - Implement free trial management and automatic conversion
   - _Requirements: 5.1, 5.3, 5.4, 5.5_
 
-- [ ] 9.1 Write property test for usage tracking
+- [x] 9.1 Write property test for usage tracking
   - **Property 19: Usage tracking accuracy**
   - **Validates: Requirements 5.1**
 
-- [ ] 9.2 Write property test for Stripe integration
+- [x] 9.2 Write property test for Stripe integration
   - **Property 20: Stripe billing integration**
   - **Validates: Requirements 5.2**
 
-- [ ] 9.3 Write property test for hard limits
+- [x] 9.3 Write property test for hard limits
   - **Property 21: Hard limit enforcement**
   - **Validates: Requirements 5.3**
 
-- [ ] 9.4 Write property test for kill switch
+- [x] 9.4 Write property test for kill switch
   - **Property 22: Kill switch activation**
   - **Validates: Requirements 5.4**
 

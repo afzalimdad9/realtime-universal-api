@@ -51,6 +51,7 @@ async-graphql-axum = { workspace = true }
 
 # Streaming
 tokio-stream = { workspace = true }
+async-stream = { workspace = true }
 
 # Environment and configuration
 dotenvy = { workspace = true }
