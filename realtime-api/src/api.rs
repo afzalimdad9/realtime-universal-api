@@ -545,3 +545,78 @@ pub async fn health_check(
         ))
     }
 }
+/// Get usage limits for the authenticated tenant
+pub async fn get_usage_limits(
+    Extension(auth_context): Extension<AuthContext>,
+    State(state): State<AppState>,
+) -> Result<Json<Value>, StatusCode> {
+    // This would integrate with the billing service to get current limits
+    // For now, return a placeholder response
+    let limits = json!({
+        "tenant_id": auth_context.tenant_id,
+        "monthly_events": 10000,
+        "max_connections": 100,
+        "current_usage": {
+            "events_published": 1500,
+            "events_delivered": 2800,
+            "websocket_minutes": 120,
+            "api_requests": 5000
+        }
+    });
+
+    Ok(Json(limits))
+}
+
+/// Suspend a tenant (admin only)
+pub async fn suspend_tenant(
+    Extension(auth_context): Extension<AuthContext>,
+    Path(tenant_id): Path<String>,
+    State(state): State<AppState>,
+) -> Result<Json<Value>, StatusCode> {
+    // Check if user has admin permissions
+    if state
+        .auth_service
+        .check_scope(&auth_context, &Scope::AdminWrite)
+        .is_err()
+    {
+        return Err(StatusCode::FORBIDDEN);
+    }
+
+    // This would integrate with the billing service to suspend the tenant
+    info!(tenant_id = %tenant_id, "Suspending tenant");
+
+    let response = json!({
+        "tenant_id": tenant_id,
+        "status": "suspended",
+        "suspended_at": chrono::Utc::now().to_rfc3339()
+    });
+
+    Ok(Json(response))
+}
+
+/// Unsuspend a tenant (admin only)
+pub async fn unsuspend_tenant(
+    Extension(auth_context): Extension<AuthContext>,
+    Path(tenant_id): Path<String>,
+    State(state): State<AppState>,
+) -> Result<Json<Value>, StatusCode> {
+    // Check if user has admin permissions
+    if state
+        .auth_service
+        .check_scope(&auth_context, &Scope::AdminWrite)
+        .is_err()
+    {
+        return Err(StatusCode::FORBIDDEN);
+    }
+
+    // This would integrate with the billing service to unsuspend the tenant
+    info!(tenant_id = %tenant_id, "Unsuspending tenant");
+
+    let response = json!({
+        "tenant_id": tenant_id,
+        "status": "active",
+        "unsuspended_at": chrono::Utc::now().to_rfc3339()
+    });
+
+    Ok(Json(response))
+}

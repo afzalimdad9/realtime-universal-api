@@ -12,6 +12,7 @@ mod nats;
 mod observability;
 mod routes;
 mod schema_validator;
+mod sse;
 mod websocket;
 
 use api::AppState;

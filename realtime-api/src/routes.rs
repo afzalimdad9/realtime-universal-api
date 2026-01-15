@@ -13,13 +13,14 @@ use tower_http::{
 };
 
 use crate::api::{
-    create_api_key, create_tenant, get_usage_report, handle_stripe_webhook, health_check,
-    publish_event, revoke_api_key, AppState,
+    create_api_key, create_tenant, get_usage_limits, get_usage_report, handle_stripe_webhook,
+    health_check, publish_event, revoke_api_key, suspend_tenant, unsuspend_tenant, AppState,
 };
 use crate::auth::{api_key_auth_middleware, AuthContext};
 use crate::graphql::{
     create_schema, graphql_handler, graphql_playground, graphql_subscription_handler, ApiSchema,
 };
+use crate::sse::sse_handler;
 
 /// Create the main application router with all endpoints
 pub fn create_router(state: AppState) -> Router {
@@ -41,6 +42,8 @@ pub fn create_router(state: AppState) -> Router {
         .route("/graphql/playground", get(graphql_playground))
         // WebSocket endpoint (authentication handled in the handler)
         .route("/ws", get(websocket_handler))
+        // SSE endpoint (authentication handled in the handler)
+        .route("/sse", get(sse_handler))
         // Protected endpoints (require authentication)
         // TODO: Fix axum version conflicts for GraphQL routes
         // .route("/graphql", post(graphql_handler_with_auth))
@@ -50,6 +53,9 @@ pub fn create_router(state: AppState) -> Router {
         .route("/admin/api-keys", post(create_api_key))
         .route("/admin/api-keys/:key_id", delete(revoke_api_key))
         .route("/billing/usage", get(get_usage_report))
+        .route("/billing/limits", get(get_usage_limits))
+        .route("/billing/suspend/:tenant_id", post(suspend_tenant))
+        .route("/billing/unsuspend/:tenant_id", post(unsuspend_tenant))
         // Apply authentication middleware to protected routes (except playground and WebSocket)
         .layer(middleware::from_fn_with_state(
             auth_service,
@@ -153,9 +159,9 @@ async fn websocket_handler(
     Ok(ws.on_upgrade(move |socket| handle_websocket_connection(socket, connection_params, state)))
 }
 
-/// SSE handler (placeholder for future implementation)
-async fn sse_handler() -> &'static str {
-    "SSE endpoint - to be implemented in task 8"
+/// SSE handler (now implemented)
+async fn sse_handler_placeholder() -> &'static str {
+    "SSE endpoint - implemented in task 8"
 }
 
 /// GraphQL handler with authentication
