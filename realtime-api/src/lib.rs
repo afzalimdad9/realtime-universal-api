@@ -9,6 +9,7 @@ pub mod graphql;
 pub mod models;
 pub mod nats;
 pub mod observability;
+pub mod rbac;
 pub mod routes;
 pub mod schema_validator;
 pub mod sse;

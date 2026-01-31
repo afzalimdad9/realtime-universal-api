@@ -15,17 +15,26 @@ use tower_http::{
 use crate::api::{
     create_api_key, create_tenant, get_usage_limits, get_usage_report, handle_stripe_webhook,
     health_check, publish_event, revoke_api_key, suspend_tenant, unsuspend_tenant, AppState,
+    update_user_role, list_tenant_users, deactivate_user,
 };
 use crate::auth::{api_key_auth_middleware, AuthContext};
 use crate::graphql::{
     create_schema, graphql_handler, graphql_playground, graphql_subscription_handler, ApiSchema,
 };
+use crate::models::Permission;
+use crate::rbac::{RbacMiddleware, require_permission};
 use crate::sse::sse_handler;
 
 /// Create the main application router with all endpoints
 pub fn create_router(state: AppState) -> Router {
     // Create the auth service for middleware
     let auth_service = state.auth_service.clone();
+
+    // Create RBAC middleware
+    let rbac_middleware = RbacMiddleware::new(
+        state.auth_service.clone(),
+        state.database.clone(),
+    );
 
     // Create GraphQL schema
     let schema = create_schema(
@@ -56,6 +65,31 @@ pub fn create_router(state: AppState) -> Router {
         .route("/billing/limits", get(get_usage_limits))
         .route("/billing/suspend/:tenant_id", post(suspend_tenant))
         .route("/billing/unsuspend/:tenant_id", post(unsuspend_tenant))
+        // RBAC-protected admin endpoints
+        .route(
+            "/admin/tenants/:tenant_id/users/:user_id/role",
+            axum::routing::put(update_user_role)
+                .layer(middleware::from_fn_with_state(
+                    rbac_middleware.clone(),
+                    require_permission(Permission::ManageUsers),
+                ))
+        )
+        .route(
+            "/admin/tenants/:tenant_id/users",
+            get(list_tenant_users)
+                .layer(middleware::from_fn_with_state(
+                    rbac_middleware.clone(),
+                    require_permission(Permission::ViewAuditLogs),
+                ))
+        )
+        .route(
+            "/admin/tenants/:tenant_id/users/:user_id/deactivate",
+            post(deactivate_user)
+                .layer(middleware::from_fn_with_state(
+                    rbac_middleware.clone(),
+                    require_permission(Permission::ManageUsers),
+                ))
+        )
         // Apply authentication middleware to protected routes (except playground and WebSocket)
         .layer(middleware::from_fn_with_state(
             auth_service,

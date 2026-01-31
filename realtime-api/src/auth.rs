@@ -14,7 +14,7 @@ use std::sync::{Arc, Mutex};
 use thiserror::Error;
 use tracing::{debug, error, info, warn};
 
-use crate::models::{ApiKey, Scope};
+use crate::models::{ApiKey, Scope, UserRole, Permission};
 use crate::Database;
 
 /// Authentication errors
@@ -65,6 +65,8 @@ pub struct AuthContext {
     pub scopes: Vec<Scope>,
     pub rate_limit_per_sec: i32,
     pub auth_type: AuthType,
+    pub user_id: Option<String>,
+    pub user_role: Option<UserRole>,
 }
 
 /// Type of authentication used
@@ -212,6 +214,8 @@ impl AuthService {
             scopes: api_key.scopes,
             rate_limit_per_sec: api_key.rate_limit_per_sec,
             auth_type: AuthType::ApiKey { key_id: api_key.id },
+            user_id: None,
+            user_role: None,
         })
     }
 
@@ -293,8 +297,10 @@ impl AuthService {
             scopes,
             rate_limit_per_sec: 1000, // Default rate limit for JWT tokens
             auth_type: AuthType::Jwt {
-                user_id: claims.sub,
+                user_id: claims.sub.clone(),
             },
+            user_id: Some(claims.sub),
+            user_role: None, // Will be populated by RBAC middleware
         })
     }
 
@@ -365,6 +371,64 @@ impl AuthService {
 
         rate_limits
             .retain(|_, entry| now.signed_duration_since(entry.window_start).num_seconds() < 60);
+    }
+
+    /// Check if user has required permission based on their role
+    pub async fn check_user_permission(
+        &self,
+        auth: &AuthContext,
+        required_permission: &Permission,
+    ) -> Result<(), AuthError> {
+        // If user_id is not available, this is an API key auth - use scope-based check
+        if let Some(user_id) = &auth.user_id {
+            let user = self
+                .database
+                .get_user(user_id)
+                .await?
+                .ok_or(AuthError::InvalidJwt)?;
+
+            if !user.is_active {
+                return Err(AuthError::TenantSuspended);
+            }
+
+            if user.has_permission(required_permission) {
+                Ok(())
+            } else {
+                Err(AuthError::InsufficientScope {
+                    required: format!("{:?}", required_permission),
+                    available: vec![format!("{:?}", user.role)],
+                })
+            }
+        } else {
+            // Fallback to scope-based permission check for API keys
+            let required_scope = match required_permission {
+                Permission::PublishEvents => Scope::EventsPublish,
+                Permission::SubscribeEvents => Scope::EventsSubscribe,
+                Permission::ViewBilling => Scope::BillingRead,
+                Permission::ManageApiKeys | Permission::ManageProjects => Scope::AdminWrite,
+                Permission::ViewAuditLogs => Scope::AdminRead,
+                _ => return Err(AuthError::InsufficientScope {
+                    required: format!("{:?}", required_permission),
+                    available: auth.scopes.iter().map(|s| format!("{:?}", s)).collect(),
+                }),
+            };
+
+            self.check_scope(auth, &required_scope)
+        }
+    }
+
+    /// Populate user role information in auth context
+    pub async fn populate_user_role(&self, mut auth: AuthContext) -> Result<AuthContext, AuthError> {
+        if let Some(user_id) = &auth.user_id {
+            let user = self
+                .database
+                .get_user(user_id)
+                .await?
+                .ok_or(AuthError::InvalidJwt)?;
+
+            auth.user_role = Some(user.role);
+        }
+        Ok(auth)
     }
 }
 

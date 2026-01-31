@@ -33,6 +33,8 @@ fn test_graphql_query_tenant_isolation() {
             scopes: vec![Scope::EventsSubscribe, Scope::AdminRead],
             rate_limit_per_sec: 100,
             auth_type: AuthType::ApiKey { key_id: "test_key".to_string() },
+            user_id: None,
+            user_role: None,
         };
 
         // Test that tenant isolation is enforced in queries
@@ -75,6 +77,8 @@ fn test_graphql_mutation_authentication() {
             scopes: scopes.clone(),
             rate_limit_per_sec: 100,
             auth_type: AuthType::ApiKey { key_id: "test_key".to_string() },
+            user_id: None,
+            user_role: None,
         };
 
         // Test scope-based authorization for mutations
@@ -109,6 +113,8 @@ fn test_graphql_subscription_delivery() {
             scopes: vec![Scope::EventsSubscribe],
             rate_limit_per_sec: 100,
             auth_type: AuthType::ApiKey { key_id: "test_key".to_string() },
+            user_id: None,
+            user_role: None,
         };
 
         // Test subscription setup and tenant isolation
@@ -144,6 +150,8 @@ mod tests {
             auth_type: AuthType::ApiKey {
                 key_id: "test_key".to_string(),
             },
+            user_id: None,
+            user_role: None,
         };
 
         assert_eq!(auth_context.tenant_id, "test_tenant");

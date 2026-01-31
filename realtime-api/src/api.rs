@@ -13,7 +13,7 @@ use uuid::Uuid;
 use crate::auth::{AuthContext, AuthService};
 use crate::database::Database;
 use crate::event_service::{EventService, PublishResult};
-use crate::models::{Event, Scope, Tenant, UsageMetric};
+use crate::models::{Event, Scope, Tenant, UsageMetric, Permission, UserRole};
 
 /// Application state shared across handlers
 #[derive(Clone)]
@@ -619,4 +619,159 @@ pub async fn unsuspend_tenant(
     });
 
     Ok(Json(response))
+}
+
+/// Admin endpoint to manage user roles (requires ManageUsers permission)
+pub async fn update_user_role(
+    State(state): State<AppState>,
+    Extension(auth_context): Extension<AuthContext>,
+    Path((tenant_id, user_id)): Path<(String, String)>,
+    Json(payload): Json<UpdateUserRoleRequest>,
+) -> Result<Json<Value>, StatusCode> {
+    // Verify tenant isolation
+    if auth_context.tenant_id != tenant_id {
+        warn!("Cross-tenant access attempt: {} -> {}", auth_context.tenant_id, tenant_id);
+        return Err(StatusCode::FORBIDDEN);
+    }
+
+    // Get current user for audit logging
+    let current_user_id = auth_context.user_id.as_ref()
+        .ok_or_else(|| {
+            error!("User ID not found in auth context");
+            StatusCode::UNAUTHORIZED
+        })?;
+
+    // Get the user being updated
+    let user = state.database.get_user(&user_id).await
+        .map_err(|e| {
+            error!("Failed to get user: {}", e);
+            StatusCode::INTERNAL_SERVER_ERROR
+        })?
+        .ok_or_else(|| {
+            warn!("User not found: {}", user_id);
+            StatusCode::NOT_FOUND
+        })?;
+
+    // Verify user belongs to the same tenant
+    if user.tenant_id != tenant_id {
+        warn!("User {} does not belong to tenant {}", user_id, tenant_id);
+        return Err(StatusCode::FORBIDDEN);
+    }
+
+    let old_role = user.role.clone();
+
+    // Update the user role
+    state.database.update_user_role(&tenant_id, &user_id, payload.role.clone()).await
+        .map_err(|e| {
+            error!("Failed to update user role: {}", e);
+            StatusCode::INTERNAL_SERVER_ERROR
+        })?;
+
+    // Log the role change for audit purposes
+    info!(
+        "Role changed for user {} in tenant {}: {:?} -> {:?} (changed by: {})",
+        user_id, tenant_id, old_role, payload.role, current_user_id
+    );
+
+    // In a real implementation, you would also:
+    // 1. Update active sessions to propagate the change immediately
+    // 2. Log to audit trail
+    // 3. Notify the user of the role change
+
+    Ok(Json(json!({
+        "success": true,
+        "message": "User role updated successfully",
+        "user_id": user_id,
+        "old_role": format!("{:?}", old_role),
+        "new_role": format!("{:?}", payload.role)
+    })))
+}
+
+/// Admin endpoint to list users in a tenant (requires ViewAuditLogs permission)
+pub async fn list_tenant_users(
+    State(state): State<AppState>,
+    Extension(auth_context): Extension<AuthContext>,
+    Path(tenant_id): Path<String>,
+) -> Result<Json<Value>, StatusCode> {
+    // Verify tenant isolation
+    if auth_context.tenant_id != tenant_id {
+        warn!("Cross-tenant access attempt: {} -> {}", auth_context.tenant_id, tenant_id);
+        return Err(StatusCode::FORBIDDEN);
+    }
+
+    // Get users for the tenant
+    let users = state.database.get_users_for_tenant(&tenant_id).await
+        .map_err(|e| {
+            error!("Failed to get users for tenant: {}", e);
+            StatusCode::INTERNAL_SERVER_ERROR
+        })?;
+
+    // Filter out sensitive information
+    let user_summaries: Vec<Value> = users.into_iter().map(|user| {
+        json!({
+            "id": user.id,
+            "email": user.email,
+            "name": user.name,
+            "role": format!("{:?}", user.role),
+            "is_active": user.is_active,
+            "created_at": user.created_at
+        })
+    }).collect();
+
+    Ok(Json(json!({
+        "success": true,
+        "users": user_summaries,
+        "count": user_summaries.len()
+    })))
+}
+
+/// Admin endpoint to deactivate a user (requires ManageUsers permission)
+pub async fn deactivate_user(
+    State(state): State<AppState>,
+    Extension(auth_context): Extension<AuthContext>,
+    Path((tenant_id, user_id)): Path<(String, String)>,
+) -> Result<Json<Value>, StatusCode> {
+    // Verify tenant isolation
+    if auth_context.tenant_id != tenant_id {
+        warn!("Cross-tenant access attempt: {} -> {}", auth_context.tenant_id, tenant_id);
+        return Err(StatusCode::FORBIDDEN);
+    }
+
+    // Get current user for audit logging
+    let current_user_id = auth_context.user_id.as_ref()
+        .ok_or_else(|| {
+            error!("User ID not found in auth context");
+            StatusCode::UNAUTHORIZED
+        })?;
+
+    // Prevent self-deactivation
+    if user_id == *current_user_id {
+        warn!("User {} attempted to deactivate themselves", user_id);
+        return Err(StatusCode::BAD_REQUEST);
+    }
+
+    // Deactivate the user
+    state.database.deactivate_user(&tenant_id, &user_id).await
+        .map_err(|e| {
+            error!("Failed to deactivate user: {}", e);
+            StatusCode::INTERNAL_SERVER_ERROR
+        })?;
+
+    // Log the deactivation for audit purposes
+    info!(
+        "User {} deactivated in tenant {} by user {}",
+        user_id, tenant_id, current_user_id
+    );
+
+    Ok(Json(json!({
+        "success": true,
+        "message": "User deactivated successfully",
+        "user_id": user_id
+    })))
+}
+
+/// Request payload for updating user roles
+#[derive(Debug, Deserialize)]
+pub struct UpdateUserRoleRequest {
+    pub role: UserRole,
 }

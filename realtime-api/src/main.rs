@@ -3,6 +3,7 @@ use tracing::{info, instrument};
 
 mod api;
 mod auth;
+mod billing;
 mod config;
 mod database;
 mod event_service;
@@ -10,6 +11,7 @@ mod graphql;
 mod models;
 mod nats;
 mod observability;
+mod rbac;
 mod routes;
 mod schema_validator;
 mod sse;

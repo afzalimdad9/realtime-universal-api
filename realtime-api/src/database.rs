@@ -500,6 +500,221 @@ impl Database {
         let total: i64 = row.get("total");
         Ok(total)
     }
+
+    // RBAC operations
+    pub async fn create_user(&self, user: &User) -> Result<()> {
+        let role_str = match &user.role {
+            UserRole::Owner => "owner",
+            UserRole::Admin => "admin",
+            UserRole::Developer => "developer",
+            UserRole::Viewer => "viewer",
+        };
+
+        sqlx::query(
+            r#"
+            INSERT INTO users (id, tenant_id, email, name, role, is_active, created_at, updated_at)
+            VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
+            "#,
+        )
+        .bind(&user.id)
+        .bind(&user.tenant_id)
+        .bind(&user.email)
+        .bind(&user.name)
+        .bind(role_str)
+        .bind(user.is_active)
+        .bind(user.created_at)
+        .bind(user.updated_at)
+        .execute(&self.pool)
+        .await?;
+
+        info!("Created user: {} for tenant: {}", user.id, user.tenant_id);
+        Ok(())
+    }
+
+    pub async fn get_user(&self, user_id: &str) -> Result<Option<User>> {
+        let row = sqlx::query(
+            "SELECT id, tenant_id, email, name, role, is_active, created_at, updated_at FROM users WHERE id = $1"
+        )
+        .bind(user_id)
+        .fetch_optional(&self.pool)
+        .await?;
+
+        if let Some(row) = row {
+            let role_str: String = row.get("role");
+            let role = match role_str.as_str() {
+                "owner" => UserRole::Owner,
+                "admin" => UserRole::Admin,
+                "developer" => UserRole::Developer,
+                "viewer" => UserRole::Viewer,
+                _ => UserRole::Viewer,
+            };
+
+            Ok(Some(User {
+                id: row.get("id"),
+                tenant_id: row.get("tenant_id"),
+                email: row.get("email"),
+                name: row.get("name"),
+                role,
+                is_active: row.get("is_active"),
+                created_at: row.get("created_at"),
+                updated_at: row.get("updated_at"),
+            }))
+        } else {
+            Ok(None)
+        }
+    }
+
+    pub async fn get_user_by_email(&self, tenant_id: &str, email: &str) -> Result<Option<User>> {
+        let row = sqlx::query(
+            "SELECT id, tenant_id, email, name, role, is_active, created_at, updated_at FROM users WHERE tenant_id = $1 AND email = $2"
+        )
+        .bind(tenant_id)
+        .bind(email)
+        .fetch_optional(&self.pool)
+        .await?;
+
+        if let Some(row) = row {
+            let role_str: String = row.get("role");
+            let role = match role_str.as_str() {
+                "owner" => UserRole::Owner,
+                "admin" => UserRole::Admin,
+                "developer" => UserRole::Developer,
+                "viewer" => UserRole::Viewer,
+                _ => UserRole::Viewer,
+            };
+
+            Ok(Some(User {
+                id: row.get("id"),
+                tenant_id: row.get("tenant_id"),
+                email: row.get("email"),
+                name: row.get("name"),
+                role,
+                is_active: row.get("is_active"),
+                created_at: row.get("created_at"),
+                updated_at: row.get("updated_at"),
+            }))
+        } else {
+            Ok(None)
+        }
+    }
+
+    pub async fn update_user_role(&self, tenant_id: &str, user_id: &str, role: UserRole) -> Result<()> {
+        let role_str = match role {
+            UserRole::Owner => "owner",
+            UserRole::Admin => "admin",
+            UserRole::Developer => "developer",
+            UserRole::Viewer => "viewer",
+        };
+
+        let result = sqlx::query(
+            "UPDATE users SET role = $1, updated_at = NOW() WHERE id = $2 AND tenant_id = $3"
+        )
+        .bind(role_str)
+        .bind(user_id)
+        .bind(tenant_id)
+        .execute(&self.pool)
+        .await?;
+
+        let rows_affected = result.rows_affected();
+
+        if rows_affected == 0 {
+            warn!("No user found with id: {} for tenant: {}", user_id, tenant_id);
+        } else {
+            info!("Updated user {} role to {:?} for tenant: {}", user_id, role, tenant_id);
+        }
+
+        Ok(())
+    }
+
+    pub async fn get_users_for_tenant(&self, tenant_id: &str) -> Result<Vec<User>> {
+        let rows = sqlx::query(
+            "SELECT id, tenant_id, email, name, role, is_active, created_at, updated_at FROM users WHERE tenant_id = $1 ORDER BY created_at"
+        )
+        .bind(tenant_id)
+        .fetch_all(&self.pool)
+        .await?;
+
+        let mut users = Vec::new();
+        for row in rows {
+            let role_str: String = row.get("role");
+            let role = match role_str.as_str() {
+                "owner" => UserRole::Owner,
+                "admin" => UserRole::Admin,
+                "developer" => UserRole::Developer,
+                "viewer" => UserRole::Viewer,
+                _ => UserRole::Viewer,
+            };
+
+            users.push(User {
+                id: row.get("id"),
+                tenant_id: row.get("tenant_id"),
+                email: row.get("email"),
+                name: row.get("name"),
+                role,
+                is_active: row.get("is_active"),
+                created_at: row.get("created_at"),
+                updated_at: row.get("updated_at"),
+            });
+        }
+
+        Ok(users)
+    }
+
+    pub async fn get_role_permissions(&self, role: UserRole) -> Result<Vec<Permission>> {
+        let role_str = match role {
+            UserRole::Owner => "owner",
+            UserRole::Admin => "admin",
+            UserRole::Developer => "developer",
+            UserRole::Viewer => "viewer",
+        };
+
+        let rows = sqlx::query(
+            "SELECT permission FROM role_permissions WHERE role = $1"
+        )
+        .bind(role_str)
+        .fetch_all(&self.pool)
+        .await?;
+
+        let mut permissions = Vec::new();
+        for row in rows {
+            let permission_str: String = row.get("permission");
+            let permission = match permission_str.as_str() {
+                "manage_tenant" => Permission::ManageTenant,
+                "manage_projects" => Permission::ManageProjects,
+                "manage_api_keys" => Permission::ManageApiKeys,
+                "manage_users" => Permission::ManageUsers,
+                "view_audit_logs" => Permission::ViewAuditLogs,
+                "publish_events" => Permission::PublishEvents,
+                "subscribe_events" => Permission::SubscribeEvents,
+                "view_billing" => Permission::ViewBilling,
+                "manage_billing" => Permission::ManageBilling,
+                _ => continue,
+            };
+            permissions.push(permission);
+        }
+
+        Ok(permissions)
+    }
+
+    pub async fn deactivate_user(&self, tenant_id: &str, user_id: &str) -> Result<()> {
+        let result = sqlx::query(
+            "UPDATE users SET is_active = false, updated_at = NOW() WHERE id = $1 AND tenant_id = $2"
+        )
+        .bind(user_id)
+        .bind(tenant_id)
+        .execute(&self.pool)
+        .await?;
+
+        let rows_affected = result.rows_affected();
+
+        if rows_affected == 0 {
+            warn!("No user found with id: {} for tenant: {}", user_id, tenant_id);
+        } else {
+            info!("Deactivated user: {} for tenant: {}", user_id, tenant_id);
+        }
+
+        Ok(())
+    }
 }
 
 #[cfg(test)]
@@ -526,5 +741,67 @@ mod tests {
             tenant_id,
             "SELECT * FROM events"
         ));
+    }
+
+    // Audit logging operations
+    pub async fn create_audit_log(
+        &self,
+        tenant_id: &str,
+        operation: &str,
+        details: &str,
+        performed_by: &str,
+    ) -> Result<()> {
+        let audit_id = uuid::Uuid::new_v4().to_string();
+        
+        sqlx::query(
+            r#"
+            INSERT INTO audit_logs (id, tenant_id, operation, details, performed_by, created_at)
+            VALUES ($1, $2, $3, $4, $5, NOW())
+            "#,
+        )
+        .bind(&audit_id)
+        .bind(tenant_id)
+        .bind(operation)
+        .bind(details)
+        .bind(performed_by)
+        .execute(&self.pool)
+        .await?;
+
+        info!("Created audit log: {} for tenant: {}", audit_id, tenant_id);
+        Ok(())
+    }
+
+    pub async fn get_audit_logs_for_tenant(
+        &self,
+        tenant_id: &str,
+        limit: Option<i64>,
+    ) -> Result<Vec<AuditLog>> {
+        let limit = limit.unwrap_or(100);
+        
+        let rows = sqlx::query(
+            "SELECT id, tenant_id, operation, details, performed_by, created_at 
+             FROM audit_logs 
+             WHERE tenant_id = $1 
+             ORDER BY created_at DESC 
+             LIMIT $2"
+        )
+        .bind(tenant_id)
+        .bind(limit)
+        .fetch_all(&self.pool)
+        .await?;
+
+        let mut audit_logs = Vec::new();
+        for row in rows {
+            audit_logs.push(AuditLog {
+                id: row.get("id"),
+                tenant_id: row.get("tenant_id"),
+                operation: row.get("operation"),
+                details: row.get("details"),
+                performed_by: row.get("performed_by"),
+                created_at: row.get("created_at"),
+            });
+        }
+
+        Ok(audit_logs)
     }
 }

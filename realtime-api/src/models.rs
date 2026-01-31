@@ -95,6 +95,53 @@ pub enum UsageMetric {
     ApiRequests,
 }
 
+/// User role enumeration for RBAC
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, sqlx::Type)]
+#[sqlx(type_name = "user_role", rename_all = "snake_case")]
+pub enum UserRole {
+    Owner,
+    Admin,
+    Developer,
+    Viewer,
+}
+
+/// Permission enumeration for RBAC
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, sqlx::Type)]
+#[sqlx(type_name = "permission", rename_all = "snake_case")]
+pub enum Permission {
+    ManageTenant,
+    ManageProjects,
+    ManageApiKeys,
+    ManageUsers,
+    ViewAuditLogs,
+    PublishEvents,
+    SubscribeEvents,
+    ViewBilling,
+    ManageBilling,
+}
+
+/// User represents a user within a tenant with specific roles
+#[derive(Debug, Clone, Serialize, Deserialize, FromRow)]
+pub struct User {
+    pub id: String,
+    pub tenant_id: String,
+    pub email: String,
+    pub name: String,
+    pub role: UserRole,
+    pub is_active: bool,
+    pub created_at: DateTime<Utc>,
+    pub updated_at: DateTime<Utc>,
+}
+
+/// Role permission mapping
+#[derive(Debug, Clone, Serialize, Deserialize, FromRow)]
+pub struct RolePermission {
+    pub id: String,
+    pub role: UserRole,
+    pub permission: Permission,
+    pub created_at: DateTime<Utc>,
+}
+
 /// Billing plan configuration
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub enum BillingPlan {
@@ -234,6 +281,98 @@ impl UsageRecord {
             metric,
             quantity,
             window_start,
+            created_at: Utc::now(),
+        }
+    }
+}
+
+impl User {
+    /// Create a new user
+    pub fn new(tenant_id: String, email: String, name: String, role: UserRole) -> Self {
+        let now = Utc::now();
+        Self {
+            id: Uuid::new_v4().to_string(),
+            tenant_id,
+            email,
+            name,
+            role,
+            is_active: true,
+            created_at: now,
+            updated_at: now,
+        }
+    }
+
+    /// Check if user has a specific permission based on their role
+    pub fn has_permission(&self, permission: &Permission) -> bool {
+        if !self.is_active {
+            return false;
+        }
+
+        match (&self.role, permission) {
+            // Owner has all permissions
+            (UserRole::Owner, _) => true,
+            
+            // Admin permissions
+            (UserRole::Admin, Permission::ManageProjects) => true,
+            (UserRole::Admin, Permission::ManageApiKeys) => true,
+            (UserRole::Admin, Permission::ManageUsers) => true,
+            (UserRole::Admin, Permission::ViewAuditLogs) => true,
+            (UserRole::Admin, Permission::PublishEvents) => true,
+            (UserRole::Admin, Permission::SubscribeEvents) => true,
+            (UserRole::Admin, Permission::ViewBilling) => true,
+            
+            // Developer permissions
+            (UserRole::Developer, Permission::ManageApiKeys) => true,
+            (UserRole::Developer, Permission::PublishEvents) => true,
+            (UserRole::Developer, Permission::SubscribeEvents) => true,
+            (UserRole::Developer, Permission::ViewBilling) => true,
+            
+            // Viewer permissions
+            (UserRole::Viewer, Permission::SubscribeEvents) => true,
+            (UserRole::Viewer, Permission::ViewBilling) => true,
+            
+            // Default deny
+            _ => false,
+        }
+    }
+}
+
+impl RolePermission {
+    /// Create a new role permission mapping
+    pub fn new(role: UserRole, permission: Permission) -> Self {
+        Self {
+            id: Uuid::new_v4().to_string(),
+            role,
+            permission,
+            created_at: Utc::now(),
+        }
+    }
+}
+/// Audit log for tracking administrative operations
+#[derive(Debug, Clone, Serialize, Deserialize, FromRow)]
+pub struct AuditLog {
+    pub id: String,
+    pub tenant_id: String,
+    pub operation: String,
+    pub details: String,
+    pub performed_by: String,
+    pub created_at: DateTime<Utc>,
+}
+
+impl AuditLog {
+    /// Create a new audit log entry
+    pub fn new(
+        tenant_id: String,
+        operation: String,
+        details: String,
+        performed_by: String,
+    ) -> Self {
+        Self {
+            id: Uuid::new_v4().to_string(),
+            tenant_id,
+            operation,
+            details,
+            performed_by,
             created_at: Utc::now(),
         }
     }

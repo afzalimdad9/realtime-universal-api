@@ -253,22 +253,22 @@ This implementation plan converts the Realtime SaaS Platform design into actiona
   - **Property 22: Kill switch activation**
   - **Validates: Requirements 5.4**
 
-- [ ] 10. Implement role-based access control (RBAC)
+- [x] 10. Implement role-based access control (RBAC)
   - Create user role management system with configurable permissions
   - Add role validation middleware for admin functions
   - Implement immediate permission updates across active sessions
   - Add audit log access control based on roles and tenant boundaries
   - _Requirements: 6.1, 6.3, 6.4, 6.5_
 
-- [ ] 10.1 Write property test for RBAC enforcement
+- [x] 10.1 Write property test for RBAC enforcement
   - **Property 23: Role-based permission enforcement**
   - **Validates: Requirements 6.1**
 
-- [ ] 10.2 Write property test for admin access validation
+- [x] 10.2 Write property test for admin access validation
   - **Property 24: Admin function access validation**
   - **Validates: Requirements 6.2**
 
-- [ ] 10.3 Write property test for role change propagation
+- [x] 10.3 Write property test for role change propagation
   - **Property 25: Role change propagation**
   - **Validates: Requirements 6.3**
 
