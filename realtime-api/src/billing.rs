@@ -344,13 +344,17 @@ impl BillingService {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use sqlx::PgPool;
 
-    #[test]
-    fn test_usage_limits_free_plan() {
-        let service = BillingService::new(
-            PgPool::connect_lazy("postgresql://localhost/test").unwrap(),
-            "test_key".to_string(),
-        );
+    fn create_test_service() -> BillingService {
+        // Create a mock pool that won't actually connect
+        let pool = PgPool::connect_lazy("postgresql://test:test@localhost/test_db").unwrap();
+        BillingService::new(pool, "test_key".to_string())
+    }
+
+    #[tokio::test]
+    async fn test_usage_limits_free_plan() {
+        let service = create_test_service();
 
         let plan = BillingPlan::Free {
             monthly_events: 10000,
@@ -361,12 +365,9 @@ mod tests {
         assert_eq!(limits.max_connections, Some(100));
     }
 
-    #[test]
-    fn test_usage_limits_enterprise_plan() {
-        let service = BillingService::new(
-            PgPool::connect_lazy("postgresql://localhost/test").unwrap(),
-            "test_key".to_string(),
-        );
+    #[tokio::test]
+    async fn test_usage_limits_enterprise_plan() {
+        let service = create_test_service();
 
         let plan = BillingPlan::Enterprise { unlimited: true };
         let limits = service.get_limits_for_plan(&plan);

@@ -15,7 +15,7 @@ use tower_http::{
 use crate::api::{
     create_api_key, create_tenant, get_usage_limits, get_usage_report, handle_stripe_webhook,
     health_check, publish_event, revoke_api_key, suspend_tenant, unsuspend_tenant, AppState,
-    update_user_role, list_tenant_users, deactivate_user,
+    update_user_role, list_tenant_users, deactivate_user, metrics_handler,
 };
 use crate::auth::{api_key_auth_middleware, AuthContext};
 use crate::graphql::{
@@ -46,6 +46,7 @@ pub fn create_router(state: AppState) -> Router {
     Router::new()
         // Public endpoints (no authentication required)
         .route("/health", get(health_check))
+        .route("/metrics", get(metrics_handler))
         .route("/billing/stripe-webhook", post(handle_stripe_webhook))
         // GraphQL playground (development only - should be disabled in production)
         .route("/graphql/playground", get(graphql_playground))

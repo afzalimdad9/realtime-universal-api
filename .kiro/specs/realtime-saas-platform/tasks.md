@@ -272,26 +272,26 @@ This implementation plan converts the Realtime SaaS Platform design into actiona
   - **Property 25: Role change propagation**
   - **Validates: Requirements 6.3**
 
-- [ ] 11. Add comprehensive observability
+- [x] 11. Add comprehensive observability
   - Implement OpenTelemetry tracing for all operations
   - Create Prometheus metrics for performance and business metrics
   - Add structured logging with correlation IDs
   - Implement alerting for errors, performance degradation, and billing issues
   - _Requirements: 7.1, 7.2, 7.3, 7.4, 7.5_
 
-- [ ] 11.1 Write property test for trace emission
+- [x] 11.1 Write property test for trace emission
   - **Property 26: OpenTelemetry trace emission**
   - **Validates: Requirements 7.1**
 
-- [ ] 11.2 Write property test for metrics exposure
+- [x] 11.2 Write property test for metrics exposure
   - **Property 27: Prometheus metrics exposure**
   - **Validates: Requirements 7.2**
 
-- [ ] 11.3 Write property test for alert generation
+- [x] 11.3 Write property test for alert generation
   - **Property 28: Alert generation on errors**
   - **Validates: Requirements 7.3**
 
-- [ ] 12. Checkpoint - Ensure all tests pass
+- [x] 12. Checkpoint - Ensure all tests pass
   - Ensure all tests pass, ask the user if questions arise.
 
 - [ ] 13. Create JavaScript/TypeScript SDK

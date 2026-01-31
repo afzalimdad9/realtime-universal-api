@@ -715,33 +715,6 @@ impl Database {
 
         Ok(())
     }
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn test_validate_tenant_isolation() {
-        let tenant_id = "tenant_123";
-
-        // Valid queries with tenant isolation
-        assert!(Database::validate_tenant_isolation(
-            tenant_id,
-            "SELECT * FROM events WHERE tenant_id = 'tenant_123'"
-        ));
-
-        assert!(Database::validate_tenant_isolation(
-            tenant_id,
-            "SELECT * FROM events WHERE tenant_id = $1"
-        ));
-
-        // Invalid query without tenant isolation
-        assert!(!Database::validate_tenant_isolation(
-            tenant_id,
-            "SELECT * FROM events"
-        ));
-    }
 
     // Audit logging operations
     pub async fn create_audit_log(
@@ -805,3 +778,31 @@ mod tests {
         Ok(audit_logs)
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_validate_tenant_isolation() {
+        let tenant_id = "tenant_123";
+
+        // Valid queries with tenant isolation
+        assert!(Database::validate_tenant_isolation(
+            tenant_id,
+            "SELECT * FROM events WHERE tenant_id = 'tenant_123'"
+        ));
+
+        assert!(Database::validate_tenant_isolation(
+            tenant_id,
+            "SELECT * FROM events WHERE tenant_id = $1"
+        ));
+
+        // Invalid query without tenant isolation
+        assert!(!Database::validate_tenant_isolation(
+            tenant_id,
+            "SELECT * FROM events"
+        ));
+    }
+}
+

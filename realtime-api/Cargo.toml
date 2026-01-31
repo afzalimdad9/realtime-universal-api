@@ -56,6 +56,10 @@ async-stream = { workspace = true }
 # Environment and configuration
 dotenvy = { workspace = true }
 
+# Metrics and monitoring
+prometheus = { workspace = true }
+axum-prometheus = { workspace = true }
+
 [dev-dependencies]
 proptest = { workspace = true }
 tokio-test = { workspace = true }

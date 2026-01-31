@@ -56,6 +56,10 @@ async-stream = "0.3"
 # Environment and configuration
 dotenvy = "0.15"
 
+# Metrics and monitoring
+prometheus = "0.13"
+axum-prometheus = "0.6"
+
 # Testing
 proptest = "1.0"
 tokio-test = "0.4"

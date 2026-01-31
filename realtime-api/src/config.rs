@@ -32,8 +32,11 @@ pub struct NatsConfig {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ObservabilityConfig {
     pub tracing_endpoint: Option<String>,
+    pub metrics_endpoint: Option<String>,
     pub service_name: String,
     pub log_level: String,
+    pub enable_alerts: bool,
+    pub alert_webhook_url: Option<String>,
 }
 
 impl Config {
@@ -61,9 +64,15 @@ impl Config {
             },
             observability: ObservabilityConfig {
                 tracing_endpoint: env::var("OTEL_EXPORTER_OTLP_ENDPOINT").ok(),
+                metrics_endpoint: env::var("METRICS_ENDPOINT").ok(),
                 service_name: env::var("OTEL_SERVICE_NAME")
                     .unwrap_or_else(|_| "realtime-api".to_string()),
                 log_level: env::var("RUST_LOG").unwrap_or_else(|_| "info".to_string()),
+                enable_alerts: env::var("ENABLE_ALERTS")
+                    .unwrap_or_else(|_| "false".to_string())
+                    .parse()
+                    .unwrap_or(false),
+                alert_webhook_url: env::var("ALERT_WEBHOOK_URL").ok(),
             },
             jwt_secret: env::var("JWT_SECRET")
                 .unwrap_or_else(|_| "default_jwt_secret_change_in_production".to_string()),

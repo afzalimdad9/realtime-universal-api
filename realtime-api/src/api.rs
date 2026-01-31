@@ -10,10 +10,12 @@ use std::collections::HashMap;
 use tracing::{error, info, warn};
 use uuid::Uuid;
 
+use crate::alerting::AlertingService;
 use crate::auth::{AuthContext, AuthService};
 use crate::database::Database;
 use crate::event_service::{EventService, PublishResult};
 use crate::models::{Event, Scope, Tenant, UsageMetric, Permission, UserRole};
+use crate::observability::Metrics;
 
 /// Application state shared across handlers
 #[derive(Clone)]
@@ -21,6 +23,8 @@ pub struct AppState {
     pub database: Database,
     pub event_service: EventService,
     pub auth_service: AuthService,
+    pub metrics: Metrics,
+    pub alerting: AlertingService,
 }
 
 /// Request payload for publishing events
@@ -122,9 +126,29 @@ pub async fn publish_event(
     Extension(auth): Extension<AuthContext>,
     Json(request): Json<PublishEventRequest>,
 ) -> Result<Json<PublishEventResponse>, (StatusCode, Json<ErrorResponse>)> {
+    use crate::observability::add_correlation_id;
+    
+    // Add correlation ID for tracing
+    let correlation_id = add_correlation_id();
+    
+    // Record API request metrics
+    let start_time = std::time::Instant::now();
+    
     // Check if the API key has publish permissions
     if !auth.scopes.contains(&Scope::EventsPublish) {
+        state.metrics.record_auth_operation("scope_check", false);
+        state.alerting.alert_error(
+            "Insufficient Permissions",
+            "API key lacks events:publish permission",
+            json!({
+                "tenant_id": auth.tenant_id,
+                "scopes": auth.scopes,
+                "correlation_id": correlation_id
+            })
+        ).await;
+        
         warn!(
+            correlation_id = correlation_id,
             "Insufficient permissions for event publishing: tenant={}, scopes={:?}",
             auth.tenant_id, auth.scopes
         );
@@ -135,14 +159,18 @@ pub async fn publish_event(
                 "API key lacks events:publish permission",
                 Some(json!({
                     "required_scope": "events:publish",
-                    "available_scopes": auth.scopes
+                    "available_scopes": auth.scopes,
+                    "correlation_id": correlation_id
                 })),
             )),
         ));
     }
 
+    state.metrics.record_auth_operation("scope_check", true);
+
     // Validate topic name
     if request.topic.is_empty() || request.topic.len() > 255 {
+        state.metrics.record_error("validation_error", "invalid_topic");
         return Err((
             StatusCode::BAD_REQUEST,
             Json(ErrorResponse::new(
@@ -150,7 +178,8 @@ pub async fn publish_event(
                 "Topic name must be between 1 and 255 characters",
                 Some(json!({
                     "topic": request.topic,
-                    "length": request.topic.len()
+                    "length": request.topic.len(),
+                    "correlation_id": correlation_id
                 })),
             )),
         ));
@@ -159,19 +188,24 @@ pub async fn publish_event(
     // Validate payload size (1MB limit)
     let payload_size = serde_json::to_string(&request.payload)
         .map_err(|e| {
-            error!("Failed to serialize payload: {}", e);
+            state.metrics.record_error("serialization_error", "invalid_payload");
+            error!(correlation_id = correlation_id, "Failed to serialize payload: {}", e);
             (
                 StatusCode::BAD_REQUEST,
                 Json(ErrorResponse::new(
                     "INVALID_PAYLOAD",
                     "Payload must be valid JSON",
-                    Some(json!({"error": e.to_string()})),
+                    Some(json!({
+                        "error": e.to_string(),
+                        "correlation_id": correlation_id
+                    })),
                 )),
             )
         })?
         .len();
 
     if payload_size > 1024 * 1024 {
+        state.metrics.record_error("validation_error", "payload_too_large");
         return Err((
             StatusCode::PAYLOAD_TOO_LARGE,
             Json(ErrorResponse::new(
@@ -179,7 +213,8 @@ pub async fn publish_event(
                 "Payload exceeds 1MB limit",
                 Some(json!({
                     "size": payload_size,
-                    "limit": 1024 * 1024
+                    "limit": 1024 * 1024,
+                    "correlation_id": correlation_id
                 })),
             )),
         ));
@@ -195,7 +230,14 @@ pub async fn publish_event(
 
     match state.event_service.publish_event(&event).await {
         Ok(PublishResult::Success) => {
+            // Record successful event publication
+            state.metrics.record_event_published(&auth.tenant_id, &request.topic);
+            
+            let duration = start_time.elapsed().as_secs_f64();
+            state.metrics.record_api_request("POST", "/events", duration);
+            
             info!(
+                correlation_id = correlation_id,
                 "Event published successfully: event_id={}, tenant={}, project={}, topic={}",
                 event.id, auth.tenant_id, auth.project_id, request.topic
             );
@@ -207,20 +249,39 @@ pub async fn publish_event(
             }))
         }
         Ok(PublishResult::ValidationFailed(msg)) => {
-            warn!("Event validation failed: {}", msg);
+            state.metrics.record_error("validation_error", "event_validation_failed");
+            warn!(correlation_id = correlation_id, "Event validation failed: {}", msg);
             Err((
                 StatusCode::BAD_REQUEST,
-                Json(ErrorResponse::new("VALIDATION_FAILED", &msg, None)),
+                Json(ErrorResponse::new(
+                    "VALIDATION_FAILED", 
+                    &msg, 
+                    Some(json!({"correlation_id": correlation_id}))
+                )),
             ))
         }
         Err(e) => {
-            error!("Failed to publish event: {}", e);
+            state.metrics.record_error("publish_error", "event_publish_failed");
+            state.alerting.alert_error(
+                "Event Publishing Failed",
+                &e.to_string(),
+                json!({
+                    "tenant_id": auth.tenant_id,
+                    "topic": request.topic,
+                    "correlation_id": correlation_id
+                })
+            ).await;
+            
+            error!(correlation_id = correlation_id, "Failed to publish event: {}", e);
             Err((
                 StatusCode::INTERNAL_SERVER_ERROR,
                 Json(ErrorResponse::new(
                     "PUBLISH_FAILED",
                     "Failed to publish event",
-                    Some(json!({"error": e.to_string()})),
+                    Some(json!({
+                        "error": e.to_string(),
+                        "correlation_id": correlation_id
+                    })),
                 )),
             ))
         }
@@ -768,6 +829,31 @@ pub async fn deactivate_user(
         "message": "User deactivated successfully",
         "user_id": user_id
     })))
+}
+
+/// GET /metrics - Prometheus metrics endpoint
+pub async fn metrics_handler(
+    State(state): State<AppState>,
+) -> Result<String, (StatusCode, Json<ErrorResponse>)> {
+    use prometheus::Encoder;
+    
+    let encoder = prometheus::TextEncoder::new();
+    let metric_families = state.metrics.registry.gather();
+    
+    match encoder.encode_to_string(&metric_families) {
+        Ok(metrics_text) => Ok(metrics_text),
+        Err(e) => {
+            error!("Failed to encode metrics: {}", e);
+            Err((
+                StatusCode::INTERNAL_SERVER_ERROR,
+                Json(ErrorResponse::new(
+                    "METRICS_ENCODING_FAILED",
+                    "Failed to encode metrics",
+                    Some(json!({"error": e.to_string()})),
+                )),
+            ))
+        }
+    }
 }
 
 /// Request payload for updating user roles

@@ -1,6 +1,7 @@
 use anyhow::Result;
 use tracing::{info, instrument};
 
+mod alerting;
 mod api;
 mod auth;
 mod billing;
@@ -17,13 +18,14 @@ mod schema_validator;
 mod sse;
 mod websocket;
 
+use alerting::AlertingService;
 use api::AppState;
 use auth::AuthService;
 use config::Config;
 use database::Database;
 use event_service::EventService;
 use nats::NatsClient;
-use observability::init_tracing;
+use observability::init_observability;
 use routes::create_router;
 use schema_validator::SchemaValidator;
 
@@ -33,8 +35,12 @@ async fn main() -> Result<()> {
     // Load configuration
     let config = Config::from_env()?;
 
-    // Initialize tracing and observability
-    init_tracing(&config).await?;
+    // Initialize comprehensive observability (tracing, metrics, alerting)
+    info!("Initializing observability...");
+    let metrics = init_observability(&config).await?;
+    
+    // Initialize alerting service
+    let alerting = AlertingService::new(config.observability.clone());
 
     info!("Starting Realtime SaaS Platform API");
     info!("Configuration loaded successfully");
@@ -66,6 +72,8 @@ async fn main() -> Result<()> {
         database,
         event_service,
         auth_service,
+        metrics,
+        alerting,
     };
 
     // Create the router

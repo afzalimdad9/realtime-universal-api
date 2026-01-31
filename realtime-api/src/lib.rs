@@ -1,4 +1,5 @@
 // Library module for shared functionality and testing
+pub mod alerting;
 pub mod api;
 pub mod auth;
 pub mod billing;
@@ -15,6 +16,7 @@ pub mod schema_validator;
 pub mod sse;
 pub mod websocket;
 
+pub use alerting::{Alert, AlertSeverity, AlertingService};
 pub use billing::BillingService;
 
 pub use api::{AppState, ErrorResponse, PublishEventRequest, PublishEventResponse};
@@ -27,7 +29,7 @@ pub use graphql::{
 };
 pub use models::*;
 pub use nats::{EventCursor, NatsClient, ReplayRequest, SubscriptionConfig};
-pub use observability::{init_tracing, shutdown_tracing};
+pub use observability::{init_observability, init_tracing, shutdown_tracing, Metrics, add_correlation_id};
 pub use routes::create_router;
 pub use schema_validator::{
     validate_api_key_security, validate_event_structure, validate_tenant_isolation, SchemaValidator,
