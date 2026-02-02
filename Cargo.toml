@@ -31,7 +31,7 @@ anyhow = "1.0"
 thiserror = "1.0"
 
 # Authentication and security
-jsonwebtoken = "9.0"
+jsonwebtoken = "10.3"
 bcrypt = "0.15"
 rand = "0.8"
 sha2 = "0.10"
