@@ -57,7 +57,7 @@ async-stream = "0.3"
 dotenvy = "0.15"
 
 # Metrics and monitoring
-prometheus = "0.13"
+prometheus = "0.14"
 axum-prometheus = "0.6"
 
 # Testing
